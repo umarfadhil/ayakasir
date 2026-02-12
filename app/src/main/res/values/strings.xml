@@ -1,0 +1,159 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">AyaKasir</string>
+
+    <!-- Auth -->
+    <string name="login_title">Masuk ke AyaKasir</string>
+    <string name="pin_hint">Masukkan PIN</string>
+    <string name="pin_error_wrong">PIN salah, coba lagi</string>
+    <string name="pin_error_not_found">Pengguna tidak ditemukan</string>
+    <string name="btn_login">Masuk</string>
+    <string name="btn_logout">Keluar</string>
+    <string name="role_owner">Pemilik</string>
+    <string name="role_cashier">Kasir</string>
+
+    <!-- Navigation -->
+    <string name="nav_pos">Kasir</string>
+    <string name="nav_dashboard">Dashboard</string>
+    <string name="nav_inventory">Stok</string>
+    <string name="nav_purchasing">Pembelian</string>
+    <string name="nav_settings">Pengaturan</string>
+    <string name="nav_products">Produk</string>
+
+    <!-- POS -->
+    <string name="pos_title">Point of Sale</string>
+    <string name="pos_cart_empty">Keranjang kosong</string>
+    <string name="pos_add_to_cart">Tambah</string>
+    <string name="pos_total">Total</string>
+    <string name="pos_checkout">Bayar</string>
+    <string name="pos_clear_cart">Kosongkan</string>
+    <string name="pos_select_variant">Pilih Varian</string>
+    <string name="pos_qty">Jumlah</string>
+    <string name="pos_item_count">%d item</string>
+
+    <!-- Checkout -->
+    <string name="checkout_title">Pembayaran</string>
+    <string name="checkout_cash">Tunai</string>
+    <string name="checkout_qris">QRIS</string>
+    <string name="checkout_success">Transaksi berhasil!</string>
+    <string name="checkout_print_receipt">Cetak Struk</string>
+    <string name="checkout_new_transaction">Transaksi Baru</string>
+    <string name="checkout_paid_amount">Jumlah Bayar</string>
+    <string name="checkout_change">Kembalian</string>
+
+    <!-- Products -->
+    <string name="product_list_title">Daftar Produk</string>
+    <string name="product_add">Tambah Produk</string>
+    <string name="product_edit">Edit Produk</string>
+    <string name="product_name">Nama Produk</string>
+    <string name="product_price">Harga</string>
+    <string name="product_category">Kategori</string>
+    <string name="product_active">Aktif</string>
+    <string name="product_inactive">Nonaktif</string>
+    <string name="product_save">Simpan</string>
+    <string name="product_delete">Hapus</string>
+    <string name="product_empty">Belum ada produk</string>
+
+    <!-- Categories -->
+    <string name="category_list_title">Daftar Kategori</string>
+    <string name="category_add">Tambah Kategori</string>
+    <string name="category_edit">Edit Kategori</string>
+    <string name="category_name">Nama Kategori</string>
+    <string name="category_empty">Belum ada kategori</string>
+    <string name="category_all">Semua</string>
+
+    <!-- Variants -->
+    <string name="variant_add">Tambah Varian</string>
+    <string name="variant_name">Nama Varian</string>
+    <string name="variant_price_adj">Selisih Harga</string>
+    <string name="variant_empty">Belum ada varian</string>
+
+    <!-- Inventory -->
+    <string name="inventory_title">Stok Barang</string>
+    <string name="inventory_current_qty">Stok Saat Ini</string>
+    <string name="inventory_min_qty">Stok Minimum</string>
+    <string name="inventory_adjust">Sesuaikan Stok</string>
+    <string name="inventory_low_stock">Stok Rendah!</string>
+    <string name="inventory_empty">Belum ada data stok</string>
+    <string name="inventory_new_qty">Stok Baru</string>
+
+    <!-- Purchasing -->
+    <string name="vendor_list_title">Daftar Pemasok</string>
+    <string name="vendor_add">Tambah Pemasok</string>
+    <string name="vendor_edit">Edit Pemasok</string>
+    <string name="vendor_name">Nama Pemasok</string>
+    <string name="vendor_phone">No. Telepon</string>
+    <string name="vendor_address">Alamat</string>
+    <string name="vendor_empty">Belum ada pemasok</string>
+
+    <string name="receiving_list_title">Penerimaan Barang</string>
+    <string name="receiving_add">Catat Penerimaan</string>
+    <string name="receiving_vendor">Pemasok</string>
+    <string name="receiving_date">Tanggal</string>
+    <string name="receiving_notes">Catatan</string>
+    <string name="receiving_items">Daftar Barang</string>
+    <string name="receiving_add_item">Tambah Barang</string>
+    <string name="receiving_qty">Jumlah</string>
+    <string name="receiving_cost">Harga Beli/unit</string>
+    <string name="receiving_empty">Belum ada penerimaan</string>
+
+    <!-- Dashboard -->
+    <string name="dashboard_title">Dashboard</string>
+    <string name="dashboard_today_sales">Penjualan Hari Ini</string>
+    <string name="dashboard_total_transactions">Total Transaksi</string>
+    <string name="dashboard_cash_total">Total Tunai</string>
+    <string name="dashboard_qris_total">Total QRIS</string>
+    <string name="dashboard_low_stock">Stok Rendah</string>
+    <string name="dashboard_no_sales">Belum ada penjualan hari ini</string>
+
+    <!-- Settings -->
+    <string name="settings_title">Pengaturan</string>
+    <string name="settings_printer">Printer</string>
+    <string name="settings_users">Kelola Pengguna</string>
+    <string name="settings_store_name">Nama Toko</string>
+
+    <!-- Printer -->
+    <string name="printer_title">Pengaturan Printer</string>
+    <string name="printer_scan">Cari Printer</string>
+    <string name="printer_connect">Hubungkan</string>
+    <string name="printer_disconnect">Putuskan</string>
+    <string name="printer_test">Cetak Tes</string>
+    <string name="printer_status_disconnected">Tidak terhubung</string>
+    <string name="printer_status_connecting">Menghubungkan…</string>
+    <string name="printer_status_connected">Terhubung: %s</string>
+    <string name="printer_status_printing">Mencetak…</string>
+    <string name="printer_status_error">Error: %s</string>
+    <string name="printer_no_devices">Tidak ada perangkat ditemukan</string>
+
+    <!-- User Management -->
+    <string name="user_management_title">Kelola Pengguna</string>
+    <string name="user_add">Tambah Pengguna</string>
+    <string name="user_name">Nama</string>
+    <string name="user_pin">PIN</string>
+    <string name="user_role">Peran</string>
+    <string name="user_change_pin">Ubah PIN</string>
+    <string name="user_new_pin">PIN Baru</string>
+    <string name="user_confirm_pin">Konfirmasi PIN</string>
+    <string name="user_pin_mismatch">PIN tidak cocok</string>
+    <string name="user_empty">Belum ada pengguna</string>
+
+    <!-- Common -->
+    <string name="btn_save">Simpan</string>
+    <string name="btn_cancel">Batal</string>
+    <string name="btn_delete">Hapus</string>
+    <string name="btn_edit">Edit</string>
+    <string name="btn_confirm">Konfirmasi</string>
+    <string name="btn_back">Kembali</string>
+    <string name="loading">Memuat…</string>
+    <string name="error_generic">Terjadi kesalahan</string>
+    <string name="confirm_delete">Yakin ingin menghapus?</string>
+    <string name="yes">Ya</string>
+    <string name="no">Tidak</string>
+    <string name="online">Online</string>
+    <string name="offline">Offline</string>
+    <string name="sync_pending">%d menunggu sinkronisasi</string>
+
+    <!-- Receipt -->
+    <string name="receipt_thank_you">Terima kasih!</string>
+    <string name="receipt_enjoy">Selamat menikmati</string>
+</resources>

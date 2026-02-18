@@ -6,5 +6,5 @@ data class CashWithdrawal(
     val amount: Long,
     val reason: String,
     val date: Long,
-    val synced: Boolean = false
+    val syncStatus: SyncStatus = SyncStatus.PENDING
 )

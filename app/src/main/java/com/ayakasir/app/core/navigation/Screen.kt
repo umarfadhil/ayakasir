@@ -4,7 +4,10 @@ import kotlinx.serialization.Serializable
 
 @Serializable
 sealed interface Screen {
-    @Serializable data object Login : Screen
+    @Serializable data object Landing : Screen
+    @Serializable data object Registration : Screen
+    @Serializable data object EmailLogin : Screen
+    @Serializable data object Login : Screen  // PIN unlock
     @Serializable data object Pos : Screen
     @Serializable data object Dashboard : Screen
     @Serializable data object Inventory : Screen

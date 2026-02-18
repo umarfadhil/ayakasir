@@ -1,5 +1,6 @@
 package com.ayakasir.app.core.sync
 
+import android.util.Log
 import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.ExistingPeriodicWorkPolicy
@@ -20,9 +21,11 @@ class SyncScheduler @Inject constructor(
     companion object {
         const val PERIODIC_SYNC_TAG = "periodic_sync"
         const val IMMEDIATE_SYNC_TAG = "immediate_sync"
+        private const val TAG = "SyncScheduler"
     }
 
     fun schedulePeriodicSync() {
+        Log.d(TAG, "Scheduling periodic sync (every 15 minutes)")
         val constraints = Constraints.Builder()
             .setRequiredNetworkType(NetworkType.CONNECTED)
             .build()
@@ -48,6 +51,7 @@ class SyncScheduler @Inject constructor(
     }
 
     fun requestImmediateSync() {
+        Log.d(TAG, "Requesting immediate sync")
         val constraints = Constraints.Builder()
             .setRequiredNetworkType(NetworkType.CONNECTED)
             .build()

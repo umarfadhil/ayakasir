@@ -9,6 +9,8 @@ import com.ayakasir.app.core.domain.model.Category
 import com.ayakasir.app.core.domain.model.CategoryType
 import com.ayakasir.app.core.domain.model.Product
 import com.ayakasir.app.core.domain.model.ProductType
+import com.ayakasir.app.core.session.SessionManager
+import com.ayakasir.app.core.sync.SyncManager
 import com.ayakasir.app.core.util.UuidGenerator
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -25,8 +27,13 @@ import javax.inject.Inject
 class ProductManagementViewModel @Inject constructor(
     private val productRepository: ProductRepository,
     private val categoryRepository: CategoryRepository,
-    private val productComponentRepository: ProductComponentRepository
+    private val productComponentRepository: ProductComponentRepository,
+    private val syncManager: SyncManager,
+    private val sessionManager: SessionManager
 ) : ViewModel() {
+
+    private val _isRefreshing = MutableStateFlow(false)
+    val isRefreshing: StateFlow<Boolean> = _isRefreshing.asStateFlow()
 
     data class ProductFormState(
         val name: String = "",
@@ -260,4 +267,16 @@ class ProductManagementViewModel @Inject constructor(
 
     fun resetProductForm() { _productForm.value = ProductFormState() }
     fun resetCategoryForm() { _categoryForm.value = CategoryFormState() }
+
+    fun refresh() {
+        val restaurantId = sessionManager.currentRestaurantId ?: return
+        viewModelScope.launch {
+            _isRefreshing.value = true
+            try {
+                syncManager.pullAllFromSupabase(restaurantId)
+            } finally {
+                _isRefreshing.value = false
+            }
+        }
+    }
 }

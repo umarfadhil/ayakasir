@@ -18,6 +18,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -29,6 +30,7 @@ import com.ayakasir.app.core.domain.model.UserRole
 import com.ayakasir.app.core.navigation.AyaKasirNavHost
 import com.ayakasir.app.core.navigation.Screen
 import com.ayakasir.app.core.session.SessionManager
+import kotlinx.coroutines.launch
 
 data class NavItem(
     val screen: Screen,
@@ -50,7 +52,8 @@ val navItems = listOf(
 @Composable
 fun MainScaffold(
     navController: NavHostController,
-    sessionManager: SessionManager
+    sessionManager: SessionManager,
+    authStartDestination: Screen
 ) {
     val currentUser by sessionManager.currentUser.collectAsStateWithLifecycle()
     val isOwner = currentUser?.role == UserRole.OWNER
@@ -65,13 +68,27 @@ fun MainScaffold(
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
 
-    // Don't show nav rail on login screen
-    val isLoginScreen = currentRoute?.contains("Login") == true
+    // Don't show nav rail on auth screens
+    val isAuthScreen = currentRoute?.contains("Landing") == true ||
+        currentRoute?.contains("Login") == true ||
+        currentRoute?.contains("EmailLogin") == true ||
+        currentRoute?.contains("Registration") == true
 
-    if (isLoginScreen || currentUser == null) {
+    val scope = rememberCoroutineScope()
+    val handleLogout: () -> Unit = {
+        scope.launch {
+            sessionManager.logout()
+        }
+        navController.navigate(Screen.Landing) {
+            popUpTo(0) { inclusive = true }
+        }
+    }
+
+    if (isAuthScreen || currentUser == null) {
         AyaKasirNavHost(
             navController = navController,
-            startDestination = Screen.Login,
+            startDestination = authStartDestination,
+            onLogout = handleLogout,
             modifier = Modifier.fillMaxSize()
         )
     } else {
@@ -106,6 +123,7 @@ fun MainScaffold(
                 AyaKasirNavHost(
                     navController = navController,
                     startDestination = Screen.Pos,
+                    onLogout = handleLogout,
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(innerPadding)

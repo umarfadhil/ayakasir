@@ -5,6 +5,7 @@ import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import com.ayakasir.app.core.domain.model.SyncStatus
 
 @Entity(
     tableName = "variants",
@@ -23,6 +24,7 @@ data class VariantEntity(
     @ColumnInfo(name = "product_id") val productId: String,
     val name: String,
     @ColumnInfo(name = "price_adjustment") val priceAdjustment: Long = 0,
-    val synced: Boolean = false,
+    @ColumnInfo(name = "restaurant_id") val restaurantId: String = "",
+    @ColumnInfo(name = "sync_status") val syncStatus: String = SyncStatus.PENDING.name,
     @ColumnInfo(name = "updated_at") val updatedAt: Long = System.currentTimeMillis()
 )

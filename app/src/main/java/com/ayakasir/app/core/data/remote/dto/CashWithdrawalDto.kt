@@ -10,6 +10,7 @@ data class CashWithdrawalDto(
     val amount: Long,
     val reason: String,
     val date: Long,
-    val synced: Boolean = true,
+    @SerialName("restaurant_id") val restaurantId: String = "",
+    @SerialName("sync_status") val syncStatus: String = "SYNCED",
     @SerialName("updated_at") val updatedAt: Long
 )

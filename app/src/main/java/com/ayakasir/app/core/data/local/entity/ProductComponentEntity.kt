@@ -5,6 +5,7 @@ import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import com.ayakasir.app.core.domain.model.SyncStatus
 
 @Entity(
     tableName = "product_components",
@@ -35,6 +36,7 @@ data class ProductComponentEntity(
     @ColumnInfo(name = "required_qty") val requiredQty: Int,
     val unit: String,
     @ColumnInfo(name = "sort_order") val sortOrder: Int = 0,
-    val synced: Boolean = false,
+    @ColumnInfo(name = "restaurant_id") val restaurantId: String = "",
+    @ColumnInfo(name = "sync_status") val syncStatus: String = SyncStatus.PENDING.name,
     @ColumnInfo(name = "updated_at") val updatedAt: Long = System.currentTimeMillis()
 )

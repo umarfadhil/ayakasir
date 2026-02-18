@@ -9,6 +9,7 @@ data class InventoryDto(
     @SerialName("variant_id") val variantId: String,
     @SerialName("current_qty") val currentQty: Int = 0,
     @SerialName("min_qty") val minQty: Int = 0,
-    val synced: Boolean = true,
+    @SerialName("restaurant_id") val restaurantId: String = "",
+    @SerialName("sync_status") val syncStatus: String = "SYNCED",
     @SerialName("updated_at") val updatedAt: Long
 )

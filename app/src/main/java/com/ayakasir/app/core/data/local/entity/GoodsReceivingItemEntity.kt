@@ -5,6 +5,7 @@ import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import com.ayakasir.app.core.domain.model.SyncStatus
 
 @Entity(
     tableName = "goods_receiving_items",
@@ -26,6 +27,7 @@ data class GoodsReceivingItemEntity(
     val qty: Int,
     @ColumnInfo(name = "cost_per_unit") val costPerUnit: Long,
     val unit: String = "pcs", // pcs, kg, liter, or custom
-    val synced: Boolean = false,
+    @ColumnInfo(name = "restaurant_id") val restaurantId: String = "",
+    @ColumnInfo(name = "sync_status") val syncStatus: String = SyncStatus.PENDING.name,
     @ColumnInfo(name = "updated_at") val updatedAt: Long = System.currentTimeMillis()
 )

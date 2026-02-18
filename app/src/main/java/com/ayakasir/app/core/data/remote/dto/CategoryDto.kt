@@ -9,6 +9,7 @@ data class CategoryDto(
     val name: String,
     @SerialName("sort_order") val sortOrder: Int = 0,
     @SerialName("category_type") val categoryType: String? = null,
-    val synced: Boolean = true,
+    @SerialName("restaurant_id") val restaurantId: String = "",
+    @SerialName("sync_status") val syncStatus: String = "SYNCED",
     @SerialName("updated_at") val updatedAt: Long
 )

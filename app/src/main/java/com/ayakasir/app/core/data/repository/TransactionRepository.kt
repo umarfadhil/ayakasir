@@ -10,9 +10,13 @@ import com.ayakasir.app.core.data.local.entity.TransactionItemEntity
 import com.ayakasir.app.core.data.local.relation.TransactionWithItems
 import com.ayakasir.app.core.domain.model.CartItem
 import com.ayakasir.app.core.domain.model.PaymentMethod
+import com.ayakasir.app.core.domain.model.SyncStatus
 import com.ayakasir.app.core.domain.model.Transaction
 import com.ayakasir.app.core.domain.model.TransactionItem
 import com.ayakasir.app.core.domain.model.TransactionStatus
+import com.ayakasir.app.core.session.SessionManager
+import com.ayakasir.app.core.sync.SyncManager
+import com.ayakasir.app.core.sync.SyncScheduler
 import com.ayakasir.app.core.util.UuidGenerator
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -24,19 +28,24 @@ class TransactionRepository @Inject constructor(
     private val transactionDao: TransactionDao,
     private val inventoryDao: InventoryDao,
     private val productComponentDao: ProductComponentDao,
-    private val syncQueueDao: SyncQueueDao
+    private val syncQueueDao: SyncQueueDao,
+    private val syncScheduler: SyncScheduler,
+    private val syncManager: SyncManager,
+    private val sessionManager: SessionManager
 ) {
+    private val restaurantId: String get() = sessionManager.currentRestaurantId ?: ""
+
     fun getTransactionsByDateRange(startTime: Long, endTime: Long): Flow<List<Transaction>> =
-        transactionDao.getByDateRange(startTime, endTime).map { list -> list.map { it.toDomain() } }
+        transactionDao.getByDateRange(restaurantId, startTime, endTime).map { list -> list.map { it.toDomain() } }
 
     fun getTotalByDateRange(startTime: Long, endTime: Long): Flow<Long> =
-        transactionDao.getTotalByDateRange(startTime, endTime)
+        transactionDao.getTotalByDateRange(restaurantId, startTime, endTime)
 
     fun getTotalByMethod(method: PaymentMethod, startTime: Long, endTime: Long): Flow<Long> =
-        transactionDao.getTotalByMethodAndDateRange(method.name, startTime, endTime)
+        transactionDao.getTotalByMethodAndDateRange(restaurantId, method.name, startTime, endTime)
 
     fun getCountByDateRange(startTime: Long, endTime: Long): Flow<Int> =
-        transactionDao.getCountByDateRange(startTime, endTime)
+        transactionDao.getCountByDateRange(restaurantId, startTime, endTime)
 
     suspend fun createTransaction(
         userId: String,
@@ -53,7 +62,10 @@ class TransactionRepository @Inject constructor(
             date = now,
             total = total,
             paymentMethod = paymentMethod.name,
-            status = TransactionStatus.COMPLETED.name
+            status = TransactionStatus.COMPLETED.name,
+            restaurantId = restaurantId,
+            syncStatus = SyncStatus.PENDING.name,
+            updatedAt = now
         )
 
         val itemEntities = cartItems.map { item ->
@@ -66,14 +78,16 @@ class TransactionRepository @Inject constructor(
                 variantName = item.variantName,
                 qty = item.qty,
                 unitPrice = item.discountedUnitPrice,
-                subtotal = item.subtotal
+                subtotal = item.subtotal,
+                restaurantId = restaurantId
             )
         }
 
         // Atomic: insert transaction + items
         transactionDao.insertFullTransaction(txnEntity, itemEntities)
 
-        // Decrement stock for each item
+        // Decrement stock for each item and enqueue inventory sync
+        val inventorySyncEntries = mutableListOf<SyncQueueEntity>()
         cartItems.forEach { item ->
             // Check if item has components (is a recipe menu)
             val components = productComponentDao.getByProductIdDirect(item.productId)
@@ -82,7 +96,7 @@ class TransactionRepository @Inject constructor(
                 // Simple product: deduct its own inventory
                 val variantId = item.variantId ?: ""
                 inventoryDao.decrementStock(item.productId, variantId, item.qty, now)
-                syncQueueDao.enqueue(
+                inventorySyncEntries.add(
                     SyncQueueEntity(
                         tableName = "inventory",
                         recordId = "${item.productId}:$variantId",
@@ -100,7 +114,7 @@ class TransactionRepository @Inject constructor(
                         totalQtyNeeded,
                         now
                     )
-                    syncQueueDao.enqueue(
+                    inventorySyncEntries.add(
                         SyncQueueEntity(
                             tableName = "inventory",
                             recordId = "${comp.componentProductId}:${comp.componentVariantId}",
@@ -112,19 +126,31 @@ class TransactionRepository @Inject constructor(
             }
         }
 
-        // Enqueue sync
-        syncQueueDao.enqueue(
-            SyncQueueEntity(tableName = "transactions", recordId = txnId, operation = "INSERT", payload = "{\"id\":\"$txnId\"}")
-        )
-
+        // Try immediate push for transaction
+        try {
+            syncManager.pushToSupabase("transactions", "INSERT", txnId)
+        } catch (e: Exception) {
+            syncQueueDao.enqueue(
+                SyncQueueEntity(tableName = "transactions", recordId = txnId, operation = "INSERT", payload = "{\"id\":\"$txnId\"}")
+            )
+            // Also enqueue inventory sync entries on failure
+            inventorySyncEntries.forEach { syncQueueDao.enqueue(it) }
+            syncScheduler.requestImmediateSync()
+        }
         return txnId
     }
 
     suspend fun voidTransaction(transactionId: String) {
         transactionDao.voidTransaction(transactionId)
-        syncQueueDao.enqueue(
-            SyncQueueEntity(tableName = "transactions", recordId = transactionId, operation = "UPDATE", payload = "{\"id\":\"$transactionId\",\"status\":\"VOIDED\"}")
-        )
+
+        try {
+            syncManager.pushToSupabase("transactions", "UPDATE", transactionId)
+        } catch (e: Exception) {
+            syncQueueDao.enqueue(
+                SyncQueueEntity(tableName = "transactions", recordId = transactionId, operation = "UPDATE", payload = "{\"id\":\"$transactionId\",\"status\":\"VOIDED\"}")
+            )
+            syncScheduler.requestImmediateSync()
+        }
     }
 
     private fun TransactionWithItems.toDomain() = Transaction(

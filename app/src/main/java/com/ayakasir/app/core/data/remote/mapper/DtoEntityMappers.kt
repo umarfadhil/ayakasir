@@ -8,12 +8,17 @@ import com.ayakasir.app.core.data.remote.dto.*
 fun UserEntity.toDto() = UserDto(
     id = id,
     name = name,
+    email = email,
+    phone = phone,
     pinHash = pinHash,
     pinSalt = pinSalt,
+    passwordHash = passwordHash,
+    passwordSalt = passwordSalt,
     role = role,
+    restaurantId = restaurantId,
     featureAccess = featureAccess,
     isActive = isActive,
-    synced = synced,
+    syncStatus = syncStatus,
     updatedAt = updatedAt,
     createdAt = createdAt
 )
@@ -23,7 +28,8 @@ fun CategoryEntity.toDto() = CategoryDto(
     name = name,
     sortOrder = sortOrder,
     categoryType = categoryType,
-    synced = synced,
+    restaurantId = restaurantId,
+    syncStatus = syncStatus,
     updatedAt = updatedAt
 )
 
@@ -36,7 +42,8 @@ fun ProductEntity.toDto() = ProductDto(
     imagePath = imagePath,
     isActive = isActive,
     productType = productType,
-    synced = synced,
+    restaurantId = restaurantId,
+    syncStatus = syncStatus,
     updatedAt = updatedAt
 )
 
@@ -45,7 +52,8 @@ fun VariantEntity.toDto() = VariantDto(
     productId = productId,
     name = name,
     priceAdjustment = priceAdjustment,
-    synced = synced,
+    restaurantId = restaurantId,
+    syncStatus = syncStatus,
     updatedAt = updatedAt
 )
 
@@ -54,7 +62,8 @@ fun VendorEntity.toDto() = VendorDto(
     name = name,
     phone = phone,
     address = address,
-    synced = synced,
+    restaurantId = restaurantId,
+    syncStatus = syncStatus,
     updatedAt = updatedAt
 )
 
@@ -63,7 +72,8 @@ fun InventoryEntity.toDto() = InventoryDto(
     variantId = variantId,
     currentQty = currentQty,
     minQty = minQty,
-    synced = synced,
+    restaurantId = restaurantId,
+    syncStatus = syncStatus,
     updatedAt = updatedAt
 )
 
@@ -72,7 +82,8 @@ fun GoodsReceivingEntity.toDto() = GoodsReceivingDto(
     vendorId = vendorId,
     date = date,
     notes = notes,
-    synced = synced,
+    restaurantId = restaurantId,
+    syncStatus = syncStatus,
     updatedAt = updatedAt
 )
 
@@ -84,7 +95,8 @@ fun GoodsReceivingItemEntity.toDto() = GoodsReceivingItemDto(
     qty = qty,
     costPerUnit = costPerUnit,
     unit = unit,
-    synced = synced,
+    restaurantId = restaurantId,
+    syncStatus = syncStatus,
     updatedAt = updatedAt
 )
 
@@ -95,7 +107,8 @@ fun TransactionEntity.toDto() = TransactionDto(
     total = total,
     paymentMethod = paymentMethod,
     status = status,
-    synced = synced,
+    restaurantId = restaurantId,
+    syncStatus = syncStatus,
     updatedAt = updatedAt
 )
 
@@ -109,7 +122,8 @@ fun TransactionItemEntity.toDto() = TransactionItemDto(
     qty = qty,
     unitPrice = unitPrice,
     subtotal = subtotal,
-    synced = synced,
+    restaurantId = restaurantId,
+    syncStatus = syncStatus,
     updatedAt = updatedAt
 )
 
@@ -118,12 +132,17 @@ fun TransactionItemEntity.toDto() = TransactionItemDto(
 fun UserDto.toEntity() = UserEntity(
     id = id,
     name = name,
+    email = email,
+    phone = phone,
     pinHash = pinHash,
     pinSalt = pinSalt,
+    passwordHash = passwordHash,
+    passwordSalt = passwordSalt,
     role = role,
+    restaurantId = restaurantId,
     featureAccess = featureAccess,
     isActive = isActive,
-    synced = synced,
+    syncStatus = syncStatus,
     updatedAt = updatedAt,
     createdAt = createdAt
 )
@@ -133,7 +152,8 @@ fun CategoryDto.toEntity() = CategoryEntity(
     name = name,
     sortOrder = sortOrder,
     categoryType = categoryType ?: "MENU",
-    synced = synced,
+    restaurantId = restaurantId ?: "",
+    syncStatus = syncStatus,
     updatedAt = updatedAt
 )
 
@@ -146,7 +166,8 @@ fun ProductDto.toEntity() = ProductEntity(
     imagePath = imagePath,
     isActive = isActive,
     productType = productType ?: "MENU_ITEM",
-    synced = synced,
+    restaurantId = restaurantId ?: "",
+    syncStatus = syncStatus,
     updatedAt = updatedAt
 )
 
@@ -155,7 +176,8 @@ fun VariantDto.toEntity() = VariantEntity(
     productId = productId,
     name = name,
     priceAdjustment = priceAdjustment,
-    synced = synced,
+    restaurantId = restaurantId ?: "",
+    syncStatus = syncStatus,
     updatedAt = updatedAt
 )
 
@@ -164,7 +186,8 @@ fun VendorDto.toEntity() = VendorEntity(
     name = name,
     phone = phone,
     address = address,
-    synced = synced,
+    restaurantId = restaurantId ?: "",
+    syncStatus = syncStatus,
     updatedAt = updatedAt
 )
 
@@ -173,7 +196,8 @@ fun InventoryDto.toEntity() = InventoryEntity(
     variantId = variantId,
     currentQty = currentQty,
     minQty = minQty,
-    synced = synced,
+    restaurantId = restaurantId ?: "",
+    syncStatus = syncStatus,
     updatedAt = updatedAt
 )
 
@@ -182,7 +206,8 @@ fun GoodsReceivingDto.toEntity() = GoodsReceivingEntity(
     vendorId = vendorId,
     date = date,
     notes = notes,
-    synced = synced,
+    restaurantId = restaurantId ?: "",
+    syncStatus = syncStatus,
     updatedAt = updatedAt
 )
 
@@ -194,7 +219,8 @@ fun GoodsReceivingItemDto.toEntity() = GoodsReceivingItemEntity(
     qty = qty,
     costPerUnit = costPerUnit,
     unit = unit,
-    synced = synced,
+    restaurantId = restaurantId ?: "",
+    syncStatus = syncStatus,
     updatedAt = updatedAt
 )
 
@@ -205,7 +231,8 @@ fun TransactionDto.toEntity() = TransactionEntity(
     total = total,
     paymentMethod = paymentMethod,
     status = status,
-    synced = synced,
+    restaurantId = restaurantId ?: "",
+    syncStatus = syncStatus,
     updatedAt = updatedAt
 )
 
@@ -219,7 +246,8 @@ fun TransactionItemDto.toEntity() = TransactionItemEntity(
     qty = qty,
     unitPrice = unitPrice,
     subtotal = subtotal,
-    synced = synced,
+    restaurantId = restaurantId ?: "",
+    syncStatus = syncStatus,
     updatedAt = updatedAt
 )
 
@@ -231,7 +259,8 @@ fun ProductComponentEntity.toDto() = ProductComponentDto(
     requiredQty = requiredQty,
     unit = unit,
     sortOrder = sortOrder,
-    synced = synced,
+    restaurantId = restaurantId,
+    syncStatus = syncStatus,
     updatedAt = updatedAt
 )
 
@@ -243,7 +272,8 @@ fun ProductComponentDto.toEntity() = ProductComponentEntity(
     requiredQty = requiredQty,
     unit = unit,
     sortOrder = sortOrder,
-    synced = synced,
+    restaurantId = restaurantId ?: "",
+    syncStatus = syncStatus,
     updatedAt = updatedAt
 )
 
@@ -253,7 +283,8 @@ fun CashWithdrawalEntity.toDto() = CashWithdrawalDto(
     amount = amount,
     reason = reason,
     date = date,
-    synced = synced,
+    restaurantId = restaurantId,
+    syncStatus = syncStatus,
     updatedAt = updatedAt
 )
 
@@ -263,6 +294,29 @@ fun CashWithdrawalDto.toEntity() = CashWithdrawalEntity(
     amount = amount,
     reason = reason,
     date = date,
-    synced = synced,
+    restaurantId = restaurantId ?: "",
+    syncStatus = syncStatus,
     updatedAt = updatedAt
+)
+
+fun RestaurantEntity.toDto() = RestaurantDto(
+    id = id,
+    name = name,
+    ownerEmail = ownerEmail,
+    ownerPhone = ownerPhone,
+    isActive = isActive,
+    syncStatus = syncStatus,
+    updatedAt = updatedAt,
+    createdAt = createdAt
+)
+
+fun RestaurantDto.toEntity() = RestaurantEntity(
+    id = id,
+    name = name,
+    ownerEmail = ownerEmail,
+    ownerPhone = ownerPhone,
+    isActive = isActive,
+    syncStatus = syncStatus,
+    updatedAt = updatedAt,
+    createdAt = createdAt
 )

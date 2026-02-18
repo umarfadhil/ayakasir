@@ -16,11 +16,11 @@ interface VendorDao {
     @Update
     suspend fun update(vendor: VendorEntity)
 
-    @Query("SELECT * FROM vendors ORDER BY name ASC")
-    fun getAll(): Flow<List<VendorEntity>>
+    @Query("SELECT * FROM vendors WHERE restaurant_id = :restaurantId ORDER BY name ASC")
+    fun getAll(restaurantId: String): Flow<List<VendorEntity>>
 
-    @Query("SELECT * FROM vendors ORDER BY name ASC")
-    suspend fun getAllDirect(): List<VendorEntity>
+    @Query("SELECT * FROM vendors WHERE restaurant_id = :restaurantId ORDER BY name ASC")
+    suspend fun getAllDirect(restaurantId: String): List<VendorEntity>
 
     @Query("SELECT * FROM vendors WHERE id = :id")
     suspend fun getById(id: String): VendorEntity?
@@ -28,6 +28,6 @@ interface VendorDao {
     @Query("DELETE FROM vendors WHERE id = :id")
     suspend fun deleteById(id: String)
 
-    @Query("UPDATE vendors SET synced = 1 WHERE id = :id")
+    @Query("UPDATE vendors SET sync_status = 'SYNCED' WHERE id = :id")
     suspend fun markSynced(id: String)
 }

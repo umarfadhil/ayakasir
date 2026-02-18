@@ -11,7 +11,11 @@ import com.ayakasir.app.core.data.local.entity.VariantEntity
 import com.ayakasir.app.core.data.local.relation.ProductWithVariants
 import com.ayakasir.app.core.domain.model.Product
 import com.ayakasir.app.core.domain.model.ProductType
+import com.ayakasir.app.core.domain.model.SyncStatus
 import com.ayakasir.app.core.domain.model.Variant
+import com.ayakasir.app.core.session.SessionManager
+import com.ayakasir.app.core.sync.SyncManager
+import com.ayakasir.app.core.sync.SyncScheduler
 import com.ayakasir.app.core.util.UuidGenerator
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -23,22 +27,27 @@ class ProductRepository @Inject constructor(
     private val productDao: ProductDao,
     private val variantDao: VariantDao,
     private val inventoryDao: InventoryDao,
-    private val syncQueueDao: SyncQueueDao
+    private val syncQueueDao: SyncQueueDao,
+    private val syncScheduler: SyncScheduler,
+    private val syncManager: SyncManager,
+    private val sessionManager: SessionManager
 ) {
+    private val restaurantId: String get() = sessionManager.currentRestaurantId ?: ""
+
     fun getAllActiveProducts(): Flow<List<Product>> =
-        productDao.getAllActiveWithVariants().map { list -> list.map { it.toDomain() } }
+        productDao.getAllActiveWithVariants(restaurantId).map { list -> list.map { it.toDomain() } }
 
     fun getProductsByCategory(categoryId: String): Flow<List<Product>> =
-        productDao.getActiveWithVariantsByCategory(categoryId).map { list -> list.map { it.toDomain() } }
+        productDao.getActiveWithVariantsByCategory(restaurantId, categoryId).map { list -> list.map { it.toDomain() } }
 
     fun getAllActiveMenuItems(): Flow<List<Product>> =
-        productDao.getAllActiveMenuItemsWithVariants().map { list -> list.map { it.toDomain() } }
+        productDao.getAllActiveMenuItemsWithVariants(restaurantId).map { list -> list.map { it.toDomain() } }
 
     fun getMenuItemsByCategory(categoryId: String): Flow<List<Product>> =
-        productDao.getActiveMenuItemsWithVariantsByCategory(categoryId).map { list -> list.map { it.toDomain() } }
+        productDao.getActiveMenuItemsWithVariantsByCategory(restaurantId, categoryId).map { list -> list.map { it.toDomain() } }
 
     fun getAllActiveRawMaterials(): Flow<List<Product>> =
-        productDao.getAllActiveRawMaterialsWithVariants().map { list -> list.map { it.toDomain() } }
+        productDao.getAllActiveRawMaterialsWithVariants(restaurantId).map { list -> list.map { it.toDomain() } }
 
     suspend fun getProductById(id: String): Product? =
         productDao.getWithVariantsById(id)?.toDomain()
@@ -60,27 +69,35 @@ class ProductRepository @Inject constructor(
             description = description,
             price = price,
             imagePath = imagePath,
-            productType = productType.name
+            productType = productType.name,
+            restaurantId = restaurantId,
+            syncStatus = SyncStatus.PENDING.name,
+            updatedAt = System.currentTimeMillis()
         )
         productDao.insert(entity)
 
         // Create inventory for base product
-        inventoryDao.insert(InventoryEntity(productId = productId, variantId = ""))
+        inventoryDao.insert(InventoryEntity(productId = productId, variantId = "", restaurantId = restaurantId))
 
         val variants = variantNames.map { (vName, adj) ->
             val vId = UuidGenerator.generate()
-            val ve = VariantEntity(id = vId, productId = productId, name = vName, priceAdjustment = adj)
+            val ve = VariantEntity(id = vId, productId = productId, name = vName, priceAdjustment = adj, restaurantId = restaurantId)
             // Create inventory per variant
-            inventoryDao.insert(InventoryEntity(productId = productId, variantId = vId))
+            inventoryDao.insert(InventoryEntity(productId = productId, variantId = vId, restaurantId = restaurantId))
             ve
         }
         if (variants.isNotEmpty()) {
             variantDao.insertAll(variants)
         }
 
-        syncQueueDao.enqueue(
-            SyncQueueEntity(tableName = "products", recordId = productId, operation = "INSERT", payload = "{\"id\":\"$productId\"}")
-        )
+        try {
+            syncManager.pushToSupabase("products", "INSERT", productId)
+        } catch (e: Exception) {
+            syncQueueDao.enqueue(
+                SyncQueueEntity(tableName = "products", recordId = productId, operation = "INSERT", payload = "{\"id\":\"$productId\"}")
+            )
+            syncScheduler.requestImmediateSync()
+        }
         return getProductById(productId)!!
     }
 
@@ -97,32 +114,43 @@ class ProductRepository @Inject constructor(
         val existing = productDao.getById(productId) ?: return
         productDao.update(existing.copy(
             name = name, categoryId = categoryId, description = description, price = price,
-            imagePath = imagePath, productType = productType.name, synced = false, updatedAt = System.currentTimeMillis()
+            imagePath = imagePath, productType = productType.name, syncStatus = SyncStatus.PENDING.name, updatedAt = System.currentTimeMillis()
         ))
 
         // Replace variants
         variantDao.deleteByProductId(productId)
         val variants = variantNames.map { (vName, adj) ->
-            VariantEntity(id = UuidGenerator.generate(), productId = productId, name = vName, priceAdjustment = adj)
+            VariantEntity(id = UuidGenerator.generate(), productId = productId, name = vName, priceAdjustment = adj, restaurantId = restaurantId)
         }
         if (variants.isNotEmpty()) {
             variantDao.insertAll(variants)
             variants.forEach { v ->
                 val inv = inventoryDao.get(productId, v.id)
-                if (inv == null) inventoryDao.insert(InventoryEntity(productId = productId, variantId = v.id))
+                if (inv == null) inventoryDao.insert(InventoryEntity(productId = productId, variantId = v.id, restaurantId = restaurantId))
             }
         }
 
-        syncQueueDao.enqueue(
-            SyncQueueEntity(tableName = "products", recordId = productId, operation = "UPDATE", payload = "{\"id\":\"$productId\"}")
-        )
+        try {
+            syncManager.pushToSupabase("products", "UPDATE", productId)
+        } catch (e: Exception) {
+            syncQueueDao.enqueue(
+                SyncQueueEntity(tableName = "products", recordId = productId, operation = "UPDATE", payload = "{\"id\":\"$productId\"}")
+            )
+            syncScheduler.requestImmediateSync()
+        }
     }
 
     suspend fun deleteProduct(productId: String) {
         productDao.deleteById(productId)
-        syncQueueDao.enqueue(
-            SyncQueueEntity(tableName = "products", recordId = productId, operation = "DELETE", payload = "{\"id\":\"$productId\"}")
-        )
+
+        try {
+            syncManager.pushToSupabase("products", "DELETE", productId)
+        } catch (e: Exception) {
+            syncQueueDao.enqueue(
+                SyncQueueEntity(tableName = "products", recordId = productId, operation = "DELETE", payload = "{\"id\":\"$productId\"}")
+            )
+            syncScheduler.requestImmediateSync()
+        }
     }
 
     private fun ProductWithVariants.toDomain() = Product(

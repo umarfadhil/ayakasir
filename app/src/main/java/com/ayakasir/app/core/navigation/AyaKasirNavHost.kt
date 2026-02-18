@@ -5,7 +5,10 @@ import androidx.compose.ui.Modifier
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import com.ayakasir.app.feature.auth.EmailLoginScreen
+import com.ayakasir.app.feature.auth.LandingScreen
 import com.ayakasir.app.feature.auth.LoginScreen
+import com.ayakasir.app.feature.auth.RegistrationScreen
 import com.ayakasir.app.feature.dashboard.DashboardScreen
 import com.ayakasir.app.feature.inventory.InventoryScreen
 import com.ayakasir.app.feature.pos.PosScreen
@@ -27,6 +30,7 @@ import com.ayakasir.app.feature.settings.UserManagementScreen
 fun AyaKasirNavHost(
     navController: NavHostController,
     startDestination: Screen,
+    onLogout: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     NavHost(
@@ -34,12 +38,52 @@ fun AyaKasirNavHost(
         startDestination = startDestination,
         modifier = modifier
     ) {
+        composable<Screen.Landing> {
+            LandingScreen(
+                onNavigateToLogin = {
+                    navController.navigate(Screen.EmailLogin)
+                },
+                onNavigateToRegister = {
+                    navController.navigate(Screen.Registration)
+                }
+            )
+        }
+
+        composable<Screen.Registration> {
+            RegistrationScreen(
+                onRegistrationSuccess = {
+                    navController.navigate(Screen.Landing) {
+                        popUpTo(Screen.Registration) { inclusive = true }
+                    }
+                },
+                onNavigateBack = {
+                    navController.popBackStack()
+                }
+            )
+        }
+
+        composable<Screen.EmailLogin> {
+            EmailLoginScreen(
+                onLoginSuccess = {
+                    navController.navigate(Screen.Pos) {
+                        popUpTo(Screen.EmailLogin) { inclusive = true }
+                    }
+                },
+                onNavigateBack = {
+                    navController.popBackStack()
+                }
+            )
+        }
+
         composable<Screen.Login> {
             LoginScreen(
                 onLoginSuccess = {
                     navController.navigate(Screen.Pos) {
                         popUpTo(Screen.Login) { inclusive = true }
                     }
+                },
+                onNavigateBack = {
+                    navController.popBackStack()
                 }
             )
         }
@@ -58,6 +102,7 @@ fun AyaKasirNavHost(
 
         composable<Screen.VendorList> {
             VendorListScreen(
+                onNavigateBack = { navController.popBackStack() },
                 onAddVendor = { navController.navigate(Screen.VendorForm) },
                 onEditVendor = { id -> navController.navigate(Screen.VendorFormEdit(id)) }
             )
@@ -102,6 +147,7 @@ fun AyaKasirNavHost(
 
         composable<Screen.ProductList> {
             ProductListScreen(
+                onNavigateBack = { navController.popBackStack() },
                 onAddProduct = { navController.navigate(Screen.ProductForm) },
                 onEditProduct = { id -> navController.navigate(Screen.ProductFormEdit(id)) }
             )
@@ -155,7 +201,10 @@ fun AyaKasirNavHost(
                 onNavigateToInitialBalance = { navController.navigate(Screen.InitialBalanceSetting) },
                 onNavigateToUsers = { navController.navigate(Screen.UserManagement) },
                 onNavigateToCategories = { navController.navigate(Screen.CategoryList) },
-                onNavigateToQris = { navController.navigate(Screen.QrisSettings) }
+                onNavigateToVendors = { navController.navigate(Screen.VendorList) },
+                onNavigateToProducts = { navController.navigate(Screen.ProductList) },
+                onNavigateToQris = { navController.navigate(Screen.QrisSettings) },
+                onLogout = onLogout
             )
         }
 

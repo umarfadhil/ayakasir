@@ -9,6 +9,7 @@ data class GoodsReceivingDto(
     @SerialName("vendor_id") val vendorId: String?,
     val date: Long,
     val notes: String? = null,
-    val synced: Boolean = true,
+    @SerialName("restaurant_id") val restaurantId: String = "",
+    @SerialName("sync_status") val syncStatus: String = "SYNCED",
     @SerialName("updated_at") val updatedAt: Long
 )

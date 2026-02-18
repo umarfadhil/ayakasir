@@ -4,7 +4,11 @@ import com.ayakasir.app.core.data.local.dao.SyncQueueDao
 import com.ayakasir.app.core.data.local.dao.VendorDao
 import com.ayakasir.app.core.data.local.entity.SyncQueueEntity
 import com.ayakasir.app.core.data.local.entity.VendorEntity
+import com.ayakasir.app.core.domain.model.SyncStatus
 import com.ayakasir.app.core.domain.model.Vendor
+import com.ayakasir.app.core.session.SessionManager
+import com.ayakasir.app.core.sync.SyncManager
+import com.ayakasir.app.core.sync.SyncScheduler
 import com.ayakasir.app.core.util.UuidGenerator
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -14,27 +18,41 @@ import javax.inject.Singleton
 @Singleton
 class VendorRepository @Inject constructor(
     private val vendorDao: VendorDao,
-    private val syncQueueDao: SyncQueueDao
+    private val syncQueueDao: SyncQueueDao,
+    private val syncScheduler: SyncScheduler,
+    private val syncManager: SyncManager,
+    private val sessionManager: SessionManager
 ) {
-    fun getAllVendors(): Flow<List<Vendor>> = vendorDao.getAll().map { list ->
+    private val restaurantId: String get() = sessionManager.currentRestaurantId ?: ""
+
+    fun getAllVendors(): Flow<List<Vendor>> = vendorDao.getAll(restaurantId).map { list ->
         list.map { it.toDomain() }
     }
 
     suspend fun getVendorById(id: String): Vendor? = vendorDao.getById(id)?.toDomain()
 
-    suspend fun getAllVendorsDirect(): List<Vendor> = vendorDao.getAllDirect().map { it.toDomain() }
+    suspend fun getAllVendorsDirect(): List<Vendor> = vendorDao.getAllDirect(restaurantId).map { it.toDomain() }
 
     suspend fun createVendor(name: String, phone: String?, address: String?): Vendor {
         val entity = VendorEntity(
             id = UuidGenerator.generate(),
             name = name,
             phone = phone,
-            address = address
+            address = address,
+            restaurantId = restaurantId,
+            syncStatus = SyncStatus.PENDING.name,
+            updatedAt = System.currentTimeMillis()
         )
         vendorDao.insert(entity)
-        syncQueueDao.enqueue(
-            SyncQueueEntity(tableName = "vendors", recordId = entity.id, operation = "INSERT", payload = "{\"id\":\"${entity.id}\"}")
-        )
+
+        try {
+            syncManager.pushToSupabase("vendors", "INSERT", entity.id)
+        } catch (e: Exception) {
+            syncQueueDao.enqueue(
+                SyncQueueEntity(tableName = "vendors", recordId = entity.id, operation = "INSERT", payload = "{\"id\":\"${entity.id}\"}")
+            )
+            syncScheduler.requestImmediateSync()
+        }
         return entity.toDomain()
     }
 
@@ -42,18 +60,30 @@ class VendorRepository @Inject constructor(
         val existing = vendorDao.getById(id) ?: return
         vendorDao.update(existing.copy(
             name = name, phone = phone, address = address,
-            synced = false, updatedAt = System.currentTimeMillis()
+            syncStatus = SyncStatus.PENDING.name, updatedAt = System.currentTimeMillis()
         ))
-        syncQueueDao.enqueue(
-            SyncQueueEntity(tableName = "vendors", recordId = id, operation = "UPDATE", payload = "{\"id\":\"$id\"}")
-        )
+
+        try {
+            syncManager.pushToSupabase("vendors", "UPDATE", id)
+        } catch (e: Exception) {
+            syncQueueDao.enqueue(
+                SyncQueueEntity(tableName = "vendors", recordId = id, operation = "UPDATE", payload = "{\"id\":\"$id\"}")
+            )
+            syncScheduler.requestImmediateSync()
+        }
     }
 
     suspend fun deleteVendor(id: String) {
         vendorDao.deleteById(id)
-        syncQueueDao.enqueue(
-            SyncQueueEntity(tableName = "vendors", recordId = id, operation = "DELETE", payload = "{\"id\":\"$id\"}")
-        )
+
+        try {
+            syncManager.pushToSupabase("vendors", "DELETE", id)
+        } catch (e: Exception) {
+            syncQueueDao.enqueue(
+                SyncQueueEntity(tableName = "vendors", recordId = id, operation = "DELETE", payload = "{\"id\":\"$id\"}")
+            )
+            syncScheduler.requestImmediateSync()
+        }
     }
 
     private fun VendorEntity.toDomain() = Vendor(

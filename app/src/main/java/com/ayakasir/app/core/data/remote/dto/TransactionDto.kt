@@ -11,6 +11,7 @@ data class TransactionDto(
     val total: Long,
     @SerialName("payment_method") val paymentMethod: String,
     val status: String,
-    val synced: Boolean = true,
+    @SerialName("restaurant_id") val restaurantId: String = "",
+    @SerialName("sync_status") val syncStatus: String = "SYNCED",
     @SerialName("updated_at") val updatedAt: Long
 )

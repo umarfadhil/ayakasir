@@ -12,6 +12,7 @@ data class ProductComponentDto(
     @SerialName("required_qty") val requiredQty: Int,
     val unit: String = "pcs",
     @SerialName("sort_order") val sortOrder: Int = 0,
-    val synced: Boolean = true,
+    @SerialName("restaurant_id") val restaurantId: String = "",
+    @SerialName("sync_status") val syncStatus: String = "SYNCED",
     @SerialName("updated_at") val updatedAt: Long
 )

@@ -14,10 +14,12 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -37,6 +39,7 @@ import com.ayakasir.app.core.domain.model.Transaction
 import com.ayakasir.app.core.util.CurrencyFormatter
 import com.ayakasir.app.core.util.DateTimeUtil
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DashboardScreen(
     viewModel: DashboardViewModel = hiltViewModel()
@@ -48,6 +51,7 @@ fun DashboardScreen(
     val lowStockCount by viewModel.lowStockCount.collectAsStateWithLifecycle()
     val lowStockItems by viewModel.lowStockItems.collectAsStateWithLifecycle()
     val todaySales by viewModel.todaySales.collectAsStateWithLifecycle()
+    val isRefreshing by viewModel.isRefreshing.collectAsStateWithLifecycle()
     val productSummary = remember(todaySales) { buildProductSummary(todaySales) }
     var showLowStockDialog by remember { mutableStateOf(false) }
     val configuration = LocalConfiguration.current
@@ -55,6 +59,11 @@ fun DashboardScreen(
     val contentPadding = if (isCompact) 16.dp else 24.dp
     val cardSpacing = if (isCompact) 12.dp else 16.dp
 
+    PullToRefreshBox(
+        isRefreshing = isRefreshing,
+        onRefresh = { viewModel.refresh() },
+        modifier = Modifier.fillMaxSize()
+    ) {
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -163,6 +172,7 @@ fun DashboardScreen(
             ProductSummaryCard(summary = productSummary)
         }
     }
+    } // PullToRefreshBox
 
     if (showLowStockDialog) {
         LowStockDialog(

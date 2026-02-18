@@ -76,9 +76,10 @@ work-runtime-ktx = { group = "androidx.work", name = "work-runtime-ktx", version
 supabase-bom = { group = "io.github.jan-tennert.supabase", name = "bom", version.ref = "supabase" }
 supabase-postgrest = { group = "io.github.jan-tennert.supabase", name = "postgrest-kt" }
 supabase-auth = { group = "io.github.jan-tennert.supabase", name = "auth-kt" }
+supabase-realtime = { group = "io.github.jan-tennert.supabase", name = "realtime-kt" }
 
-# Ktor (required by Supabase SDK)
-ktor-client-android = { group = "io.ktor", name = "ktor-client-android", version.ref = "ktor" }
+# Ktor (required by Supabase SDK - OkHttp engine for WebSocket support)
+ktor-client-okhttp = { group = "io.ktor", name = "ktor-client-okhttp", version.ref = "ktor" }
 ktor-client-core = { group = "io.ktor", name = "ktor-client-core", version.ref = "ktor" }
 
 # Kotlinx

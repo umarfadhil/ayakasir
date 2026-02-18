@@ -4,6 +4,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.ayakasir.app.core.data.repository.InventoryRepository
 import com.ayakasir.app.core.domain.model.InventoryItem
+import com.ayakasir.app.core.session.SessionManager
+import com.ayakasir.app.core.sync.SyncManager
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -17,8 +19,13 @@ import javax.inject.Inject
 
 @HiltViewModel
 class InventoryViewModel @Inject constructor(
-    private val inventoryRepository: InventoryRepository
+    private val inventoryRepository: InventoryRepository,
+    private val syncManager: SyncManager,
+    private val sessionManager: SessionManager
 ) : ViewModel() {
+
+    private val _isRefreshing = MutableStateFlow(false)
+    val isRefreshing: StateFlow<Boolean> = _isRefreshing.asStateFlow()
 
     data class InventoryUiState(
         val adjustItem: InventoryItem? = null,
@@ -83,6 +90,18 @@ class InventoryViewModel @Inject constructor(
             inventoryRepository.adjustStock(item.productId, item.variantId, qty)
             inventoryRepository.setMinQty(item.productId, item.variantId, minQty)
             _uiState.update { it.copy(adjustItem = null, isAdjusting = false) }
+        }
+    }
+
+    fun refresh() {
+        val restaurantId = sessionManager.currentRestaurantId ?: return
+        viewModelScope.launch {
+            _isRefreshing.value = true
+            try {
+                syncManager.pullAllFromSupabase(restaurantId)
+            } finally {
+                _isRefreshing.value = false
+            }
         }
     }
 }

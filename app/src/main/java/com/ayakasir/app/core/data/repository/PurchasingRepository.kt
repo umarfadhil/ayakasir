@@ -11,6 +11,10 @@ import com.ayakasir.app.core.data.local.entity.InventoryEntity
 import com.ayakasir.app.core.data.local.entity.SyncQueueEntity
 import com.ayakasir.app.core.domain.model.GoodsReceiving
 import com.ayakasir.app.core.domain.model.GoodsReceivingItem
+import com.ayakasir.app.core.domain.model.SyncStatus
+import com.ayakasir.app.core.session.SessionManager
+import com.ayakasir.app.core.sync.SyncManager
+import com.ayakasir.app.core.sync.SyncScheduler
 import com.ayakasir.app.core.util.UuidGenerator
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -24,10 +28,15 @@ class PurchasingRepository @Inject constructor(
     private val inventoryDao: InventoryDao,
     private val productDao: ProductDao,
     private val vendorDao: VendorDao,
-    private val syncQueueDao: SyncQueueDao
+    private val syncQueueDao: SyncQueueDao,
+    private val syncScheduler: SyncScheduler,
+    private val syncManager: SyncManager,
+    private val sessionManager: SessionManager
 ) {
+    private val restaurantId: String get() = sessionManager.currentRestaurantId ?: ""
+
     fun getAllReceiving(): Flow<List<GoodsReceiving>> =
-        goodsReceivingDao.getAllWithItems().transform { list ->
+        goodsReceivingDao.getAllWithItems(restaurantId).transform { list ->
             val receivingList = list.map { withItems ->
                 val itemsWithProduct = goodsReceivingDao.getItemsWithProductInfo(withItems.receiving.id)
 
@@ -83,6 +92,7 @@ class PurchasingRepository @Inject constructor(
 
     suspend fun createReceiving(
         vendorId: String,
+        date: Long,
         notes: String?,
         items: List<GoodsReceivingItem>
     ): String {
@@ -92,8 +102,11 @@ class PurchasingRepository @Inject constructor(
         val entity = GoodsReceivingEntity(
             id = receivingId,
             vendorId = vendorId,
-            date = now,
-            notes = notes
+            date = date,
+            notes = notes,
+            restaurantId = restaurantId,
+            syncStatus = SyncStatus.PENDING.name,
+            updatedAt = now
         )
         goodsReceivingDao.insert(entity)
 
@@ -105,12 +118,14 @@ class PurchasingRepository @Inject constructor(
                 variantId = item.variantId,
                 qty = item.qty,
                 costPerUnit = item.costPerUnit,
-                unit = item.unit
+                unit = item.unit,
+                restaurantId = restaurantId
             )
         }
         goodsReceivingDao.insertItems(itemEntities)
 
         // Increment inventory for each item
+        val inventorySyncEntries = mutableListOf<SyncQueueEntity>()
         items.forEach { item ->
             val existing = inventoryDao.get(item.productId, item.variantId)
             if (existing != null) {
@@ -119,10 +134,11 @@ class PurchasingRepository @Inject constructor(
                 inventoryDao.insert(InventoryEntity(
                     productId = item.productId,
                     variantId = item.variantId,
-                    currentQty = item.qty
+                    currentQty = item.qty,
+                    restaurantId = restaurantId
                 ))
             }
-            syncQueueDao.enqueue(
+            inventorySyncEntries.add(
                 SyncQueueEntity(
                     tableName = "inventory",
                     recordId = "${item.productId}:${item.variantId}",
@@ -132,9 +148,25 @@ class PurchasingRepository @Inject constructor(
             )
         }
 
-        syncQueueDao.enqueue(
-            SyncQueueEntity(tableName = "goods_receiving", recordId = receivingId, operation = "INSERT", payload = "{\"id\":\"$receivingId\"}")
-        )
+        // Push goods_receiving + items
+        try {
+            syncManager.pushGoodsReceivingWithItems(entity, itemEntities)
+        } catch (e: Exception) {
+            syncQueueDao.enqueue(
+                SyncQueueEntity(tableName = "goods_receiving", recordId = receivingId, operation = "INSERT", payload = "{\"id\":\"$receivingId\"}")
+            )
+            syncScheduler.requestImmediateSync()
+        }
+
+        // Push inventory changes independently (not gated by goods_receiving success)
+        inventorySyncEntries.forEach { entry ->
+            try {
+                syncManager.pushToSupabase(entry.tableName, entry.operation, entry.recordId)
+            } catch (e: Exception) {
+                syncQueueDao.enqueue(entry)
+                syncScheduler.requestImmediateSync()
+            }
+        }
 
         return receivingId
     }
@@ -142,20 +174,22 @@ class PurchasingRepository @Inject constructor(
     suspend fun updateReceiving(
         receivingId: String,
         vendorId: String,
+        date: Long,
         notes: String?,
         newItems: List<GoodsReceivingItem>
     ) {
         val now = System.currentTimeMillis()
 
-        // Get old items to calculate inventory delta
-        val oldReceiving = goodsReceivingDao.getWithItemsById(receivingId) ?: return
+        // Get old items via direct query to avoid @Relation empty-list bug
+        val oldItems = goodsReceivingDao.getItemsByReceivingId(receivingId)
 
         // Revert old inventory changes
-        oldReceiving.items.forEach { oldItem ->
+        val inventorySyncEntries = mutableListOf<SyncQueueEntity>()
+        oldItems.forEach { oldItem ->
             val existing = inventoryDao.get(oldItem.productId, oldItem.variantId)
             if (existing != null) {
                 inventoryDao.incrementStock(oldItem.productId, oldItem.variantId, -oldItem.qty, now)
-                syncQueueDao.enqueue(
+                inventorySyncEntries.add(
                     SyncQueueEntity(
                         tableName = "inventory",
                         recordId = "${oldItem.productId}:${oldItem.variantId}",
@@ -170,9 +204,10 @@ class PurchasingRepository @Inject constructor(
         val entity = GoodsReceivingEntity(
             id = receivingId,
             vendorId = vendorId,
-            date = oldReceiving.receiving.date, // Keep original date
+            date = date,
             notes = notes,
-            synced = false,
+            restaurantId = restaurantId,
+            syncStatus = SyncStatus.PENDING.name,
             updatedAt = now
         )
         goodsReceivingDao.insert(entity)
@@ -189,7 +224,8 @@ class PurchasingRepository @Inject constructor(
                 variantId = item.variantId,
                 qty = item.qty,
                 costPerUnit = item.costPerUnit,
-                unit = item.unit
+                unit = item.unit,
+                restaurantId = restaurantId
             )
         }
         goodsReceivingDao.insertItems(itemEntities)
@@ -203,10 +239,11 @@ class PurchasingRepository @Inject constructor(
                 inventoryDao.insert(InventoryEntity(
                     productId = item.productId,
                     variantId = item.variantId,
-                    currentQty = item.qty
+                    currentQty = item.qty,
+                    restaurantId = restaurantId
                 ))
             }
-            syncQueueDao.enqueue(
+            inventorySyncEntries.add(
                 SyncQueueEntity(
                     tableName = "inventory",
                     recordId = "${item.productId}:${item.variantId}",
@@ -216,19 +253,36 @@ class PurchasingRepository @Inject constructor(
             )
         }
 
-        syncQueueDao.enqueue(
-            SyncQueueEntity(tableName = "goods_receiving", recordId = receivingId, operation = "UPDATE", payload = "{\"id\":\"$receivingId\"}")
-        )
+        // Push goods_receiving + items
+        try {
+            syncManager.pushGoodsReceivingWithItems(entity, itemEntities)
+        } catch (e: Exception) {
+            syncQueueDao.enqueue(
+                SyncQueueEntity(tableName = "goods_receiving", recordId = receivingId, operation = "UPDATE", payload = "{\"id\":\"$receivingId\"}")
+            )
+            syncScheduler.requestImmediateSync()
+        }
+
+        // Push inventory changes independently
+        inventorySyncEntries.forEach { entry ->
+            try {
+                syncManager.pushToSupabase(entry.tableName, entry.operation, entry.recordId)
+            } catch (e: Exception) {
+                syncQueueDao.enqueue(entry)
+                syncScheduler.requestImmediateSync()
+            }
+        }
     }
 
     suspend fun deleteReceiving(receivingId: String) {
         val now = System.currentTimeMillis()
 
-        // Get receiving with items before deleting
-        val receiving = goodsReceivingDao.getWithItemsById(receivingId) ?: return
+        // Get items before deleting (use direct query, not @Relation)
+        val receivingItems = goodsReceivingDao.getItemsByReceivingId(receivingId)
 
         // Decrement inventory for each item
-        receiving.items.forEach { itemEntity ->
+        val inventorySyncEntries = mutableListOf<SyncQueueEntity>()
+        receivingItems.forEach { itemEntity ->
             val existing = inventoryDao.get(itemEntity.productId, itemEntity.variantId)
             if (existing != null) {
                 val newQty = (existing.currentQty - itemEntity.qty).coerceAtLeast(0)
@@ -238,7 +292,7 @@ class PurchasingRepository @Inject constructor(
                     // If quantity reaches 0, we can either delete or keep it at 0
                     inventoryDao.incrementStock(itemEntity.productId, itemEntity.variantId, -itemEntity.qty, now)
                 }
-                syncQueueDao.enqueue(
+                inventorySyncEntries.add(
                     SyncQueueEntity(
                         tableName = "inventory",
                         recordId = "${itemEntity.productId}:${itemEntity.variantId}",
@@ -252,9 +306,24 @@ class PurchasingRepository @Inject constructor(
         // Delete the receiving (cascade will delete items)
         goodsReceivingDao.delete(receivingId)
 
-        // Enqueue sync operation
-        syncQueueDao.enqueue(
-            SyncQueueEntity(tableName = "goods_receiving", recordId = receivingId, operation = "DELETE", payload = "{\"id\":\"$receivingId\"}")
-        )
+        // Push goods_receiving delete
+        try {
+            syncManager.pushToSupabase("goods_receiving", "DELETE", receivingId)
+        } catch (e: Exception) {
+            syncQueueDao.enqueue(
+                SyncQueueEntity(tableName = "goods_receiving", recordId = receivingId, operation = "DELETE", payload = "{\"id\":\"$receivingId\"}")
+            )
+            syncScheduler.requestImmediateSync()
+        }
+
+        // Push inventory changes independently
+        inventorySyncEntries.forEach { entry ->
+            try {
+                syncManager.pushToSupabase(entry.tableName, entry.operation, entry.recordId)
+            } catch (e: Exception) {
+                syncQueueDao.enqueue(entry)
+                syncScheduler.requestImmediateSync()
+            }
+        }
     }
 }

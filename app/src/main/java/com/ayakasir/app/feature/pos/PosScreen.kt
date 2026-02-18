@@ -67,6 +67,7 @@ import com.ayakasir.app.core.ui.component.CashWithdrawalDialog
 import com.ayakasir.app.core.ui.component.ConfirmDialog
 import com.ayakasir.app.core.util.CurrencyFormatter
 import com.ayakasir.app.core.util.DateTimeUtil
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import coil3.compose.AsyncImage
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -79,6 +80,7 @@ fun PosScreen(
     val products by viewModel.products.collectAsStateWithLifecycle()
     val cashBalance by viewModel.cashBalance.collectAsStateWithLifecycle()
     val isQrisConfigured by viewModel.isQrisConfigured.collectAsStateWithLifecycle()
+    val isRefreshing by viewModel.isRefreshing.collectAsStateWithLifecycle()
     var discountTarget by remember { mutableStateOf<CartItem?>(null) }
 
     Row(modifier = Modifier.fillMaxSize()) {
@@ -119,6 +121,11 @@ fun PosScreen(
             }
 
             // Product grid
+            PullToRefreshBox(
+                isRefreshing = isRefreshing,
+                onRefresh = { viewModel.refresh() },
+                modifier = Modifier.fillMaxSize()
+            ) {
             if (products.isEmpty()) {
                 Box(
                     modifier = Modifier.fillMaxSize(),
@@ -140,6 +147,7 @@ fun PosScreen(
                     }
                 }
             }
+            } // PullToRefreshBox
         }
 
         VerticalDivider()

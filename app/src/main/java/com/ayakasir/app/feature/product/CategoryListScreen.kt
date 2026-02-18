@@ -37,6 +37,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.ayakasir.app.core.ui.component.ConfirmDialog
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
@@ -48,6 +49,7 @@ fun CategoryListScreen(
 ) {
     val menuCategories by viewModel.menuCategories.collectAsStateWithLifecycle()
     val rawMaterialCategories by viewModel.rawMaterialCategories.collectAsStateWithLifecycle()
+    val isRefreshing by viewModel.isRefreshing.collectAsStateWithLifecycle()
     var deleteId by remember { mutableStateOf<String?>(null) }
 
     Scaffold(
@@ -67,10 +69,14 @@ fun CategoryListScreen(
             }
         }
     ) { padding ->
+        PullToRefreshBox(
+            isRefreshing = isRefreshing,
+            onRefresh = { viewModel.refresh() },
+            modifier = Modifier.fillMaxSize().padding(padding)
+        ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding)
                 .padding(24.dp)
         ) {
             if (menuCategories.isEmpty() && rawMaterialCategories.isEmpty()) {
@@ -78,7 +84,10 @@ fun CategoryListScreen(
                     Text("Belum ada kategori", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             } else {
-                LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     // Menu Items Section
                     item {
                         Text(
@@ -163,6 +172,7 @@ fun CategoryListScreen(
                 }
             }
         }
+        } // PullToRefreshBox
     }
 
     deleteId?.let { id ->

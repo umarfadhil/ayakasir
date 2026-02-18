@@ -21,19 +21,19 @@ interface ProductDao {
     @Query("SELECT * FROM products WHERE id = :id")
     suspend fun getById(id: String): ProductEntity?
 
-    @Query("SELECT * FROM products WHERE is_active = 1 ORDER BY name ASC")
-    fun getAllActive(): Flow<List<ProductEntity>>
+    @Query("SELECT * FROM products WHERE restaurant_id = :restaurantId AND is_active = 1 ORDER BY name ASC")
+    fun getAllActive(restaurantId: String): Flow<List<ProductEntity>>
 
-    @Query("SELECT * FROM products ORDER BY name ASC")
-    fun getAll(): Flow<List<ProductEntity>>
-
-    @Transaction
-    @Query("SELECT * FROM products WHERE is_active = 1 ORDER BY name ASC")
-    fun getAllActiveWithVariants(): Flow<List<ProductWithVariants>>
+    @Query("SELECT * FROM products WHERE restaurant_id = :restaurantId ORDER BY name ASC")
+    fun getAll(restaurantId: String): Flow<List<ProductEntity>>
 
     @Transaction
-    @Query("SELECT * FROM products WHERE category_id = :categoryId AND is_active = 1 ORDER BY name ASC")
-    fun getActiveWithVariantsByCategory(categoryId: String): Flow<List<ProductWithVariants>>
+    @Query("SELECT * FROM products WHERE restaurant_id = :restaurantId AND is_active = 1 ORDER BY name ASC")
+    fun getAllActiveWithVariants(restaurantId: String): Flow<List<ProductWithVariants>>
+
+    @Transaction
+    @Query("SELECT * FROM products WHERE restaurant_id = :restaurantId AND category_id = :categoryId AND is_active = 1 ORDER BY name ASC")
+    fun getActiveWithVariantsByCategory(restaurantId: String, categoryId: String): Flow<List<ProductWithVariants>>
 
     @Transaction
     @Query("SELECT * FROM products WHERE id = :id")
@@ -44,33 +44,35 @@ interface ProductDao {
     @Query("""
         SELECT p.* FROM products p
         LEFT JOIN categories c ON p.category_id = c.id
-        WHERE p.is_active = 1
-        AND p.product_type = 'MENU_ITEM'
-        AND (c.category_type IS NULL OR c.category_type = 'MENU')
-        ORDER BY p.name ASC
-    """)
-    fun getAllActiveMenuItemsWithVariants(): Flow<List<ProductWithVariants>>
-
-    @Transaction
-    @Query("""
-        SELECT p.* FROM products p
-        LEFT JOIN categories c ON p.category_id = c.id
-        WHERE p.category_id = :categoryId
+        WHERE p.restaurant_id = :restaurantId
         AND p.is_active = 1
         AND p.product_type = 'MENU_ITEM'
         AND (c.category_type IS NULL OR c.category_type = 'MENU')
         ORDER BY p.name ASC
     """)
-    fun getActiveMenuItemsWithVariantsByCategory(categoryId: String): Flow<List<ProductWithVariants>>
+    fun getAllActiveMenuItemsWithVariants(restaurantId: String): Flow<List<ProductWithVariants>>
+
+    @Transaction
+    @Query("""
+        SELECT p.* FROM products p
+        LEFT JOIN categories c ON p.category_id = c.id
+        WHERE p.restaurant_id = :restaurantId
+        AND p.category_id = :categoryId
+        AND p.is_active = 1
+        AND p.product_type = 'MENU_ITEM'
+        AND (c.category_type IS NULL OR c.category_type = 'MENU')
+        ORDER BY p.name ASC
+    """)
+    fun getActiveMenuItemsWithVariantsByCategory(restaurantId: String, categoryId: String): Flow<List<ProductWithVariants>>
 
     // Type-filtered queries for raw materials
     @Transaction
-    @Query("SELECT * FROM products WHERE is_active = 1 AND product_type = 'RAW_MATERIAL' ORDER BY name ASC")
-    fun getAllActiveRawMaterialsWithVariants(): Flow<List<ProductWithVariants>>
+    @Query("SELECT * FROM products WHERE restaurant_id = :restaurantId AND is_active = 1 AND product_type = 'RAW_MATERIAL' ORDER BY name ASC")
+    fun getAllActiveRawMaterialsWithVariants(restaurantId: String): Flow<List<ProductWithVariants>>
 
     @Query("DELETE FROM products WHERE id = :id")
     suspend fun deleteById(id: String)
 
-    @Query("UPDATE products SET synced = 1 WHERE id = :id")
+    @Query("UPDATE products SET sync_status = 'SYNCED' WHERE id = :id")
     suspend fun markSynced(id: String)
 }

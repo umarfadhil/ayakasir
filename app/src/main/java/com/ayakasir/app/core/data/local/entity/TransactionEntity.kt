@@ -4,13 +4,14 @@ import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import com.ayakasir.app.core.domain.model.SyncStatus
 
 @Entity(
     tableName = "transactions",
     indices = [
         Index("user_id"),
         Index("date"),
-        Index("synced")
+        Index("sync_status")
     ]
 )
 data class TransactionEntity(
@@ -20,6 +21,7 @@ data class TransactionEntity(
     val total: Long,
     @ColumnInfo(name = "payment_method") val paymentMethod: String, // CASH or QRIS
     val status: String, // COMPLETED or VOIDED
-    val synced: Boolean = false,
+    @ColumnInfo(name = "restaurant_id") val restaurantId: String = "",
+    @ColumnInfo(name = "sync_status") val syncStatus: String = SyncStatus.PENDING.name,
     @ColumnInfo(name = "updated_at") val updatedAt: Long = System.currentTimeMillis()
 )

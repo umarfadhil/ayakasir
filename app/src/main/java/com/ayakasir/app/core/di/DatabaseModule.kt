@@ -11,6 +11,7 @@ import com.ayakasir.app.core.data.local.dao.GoodsReceivingDao
 import com.ayakasir.app.core.data.local.dao.InventoryDao
 import com.ayakasir.app.core.data.local.dao.ProductComponentDao
 import com.ayakasir.app.core.data.local.dao.ProductDao
+import com.ayakasir.app.core.data.local.dao.RestaurantDao
 import com.ayakasir.app.core.data.local.dao.SyncQueueDao
 import com.ayakasir.app.core.data.local.dao.TransactionDao
 import com.ayakasir.app.core.data.local.dao.UserDao
@@ -35,12 +36,13 @@ object DatabaseModule {
             AyaKasirDatabase::class.java,
             "ayakasir.db"
         )
-            .addMigrations(MIGRATION_4_5, MIGRATION_6_7)
+            .addMigrations(MIGRATION_4_5, MIGRATION_6_7, AyaKasirDatabase.MIGRATION_7_8, AyaKasirDatabase.MIGRATION_8_9, AyaKasirDatabase.MIGRATION_9_10, AyaKasirDatabase.MIGRATION_10_11, AyaKasirDatabase.MIGRATION_11_12)
             .fallbackToDestructiveMigration()
             .build()
     }
 
     @Provides fun provideUserDao(db: AyaKasirDatabase): UserDao = db.userDao()
+    @Provides fun provideRestaurantDao(db: AyaKasirDatabase): RestaurantDao = db.restaurantDao()
     @Provides fun provideCategoryDao(db: AyaKasirDatabase): CategoryDao = db.categoryDao()
     @Provides fun provideProductDao(db: AyaKasirDatabase): ProductDao = db.productDao()
     @Provides fun provideVariantDao(db: AyaKasirDatabase): VariantDao = db.variantDao()

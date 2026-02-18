@@ -18,11 +18,14 @@ interface GoodsReceivingDao {
     suspend fun insert(receiving: GoodsReceivingEntity)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertItem(item: GoodsReceivingItemEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertItems(items: List<GoodsReceivingItemEntity>)
 
     @Transaction
-    @Query("SELECT * FROM goods_receiving ORDER BY date DESC")
-    fun getAllWithItems(): Flow<List<GoodsReceivingWithVendorAndItems>>
+    @Query("SELECT * FROM goods_receiving WHERE restaurant_id = :restaurantId ORDER BY date DESC")
+    fun getAllWithItems(restaurantId: String): Flow<List<GoodsReceivingWithVendorAndItems>>
 
     @Transaction
     @Query("SELECT * FROM goods_receiving WHERE id = :id")
@@ -46,10 +49,16 @@ interface GoodsReceivingDao {
     """)
     suspend fun getItemsWithProductInfo(receivingId: String): List<GoodsReceivingItemWithProduct>
 
-    @Query("UPDATE goods_receiving SET synced = 1 WHERE id = :id")
+    @Query("SELECT * FROM goods_receiving WHERE id = :id")
+    suspend fun getById(id: String): GoodsReceivingEntity?
+
+    @Query("SELECT * FROM goods_receiving_items WHERE receiving_id = :receivingId")
+    suspend fun getItemsByReceivingId(receivingId: String): List<GoodsReceivingItemEntity>
+
+    @Query("UPDATE goods_receiving SET sync_status = 'SYNCED' WHERE id = :id")
     suspend fun markSynced(id: String)
 
-    @Query("UPDATE goods_receiving_items SET synced = 1 WHERE receiving_id = :receivingId")
+    @Query("UPDATE goods_receiving_items SET sync_status = 'SYNCED' WHERE receiving_id = :receivingId")
     suspend fun markItemsSynced(receivingId: String)
 
     @Query("DELETE FROM goods_receiving WHERE id = :id")

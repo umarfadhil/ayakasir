@@ -31,6 +31,6 @@ interface ProductComponentDao {
     @Query("DELETE FROM product_components WHERE parent_product_id = :productId")
     suspend fun deleteByProductId(productId: String)
 
-    @Query("UPDATE product_components SET synced = 1 WHERE id = :id")
+    @Query("UPDATE product_components SET sync_status = 'SYNCED' WHERE id = :id")
     suspend fun markSynced(id: String)
 }

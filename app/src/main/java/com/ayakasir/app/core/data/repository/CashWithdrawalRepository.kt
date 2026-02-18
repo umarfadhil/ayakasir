@@ -5,6 +5,10 @@ import com.ayakasir.app.core.data.local.dao.SyncQueueDao
 import com.ayakasir.app.core.data.local.entity.CashWithdrawalEntity
 import com.ayakasir.app.core.data.local.entity.SyncQueueEntity
 import com.ayakasir.app.core.domain.model.CashWithdrawal
+import com.ayakasir.app.core.domain.model.SyncStatus
+import com.ayakasir.app.core.session.SessionManager
+import com.ayakasir.app.core.sync.SyncManager
+import com.ayakasir.app.core.sync.SyncScheduler
 import com.ayakasir.app.core.util.UuidGenerator
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -14,16 +18,21 @@ import javax.inject.Singleton
 @Singleton
 class CashWithdrawalRepository @Inject constructor(
     private val cashWithdrawalDao: CashWithdrawalDao,
-    private val syncQueueDao: SyncQueueDao
+    private val syncQueueDao: SyncQueueDao,
+    private val syncScheduler: SyncScheduler,
+    private val syncManager: SyncManager,
+    private val sessionManager: SessionManager
 ) {
+    private val restaurantId: String get() = sessionManager.currentRestaurantId ?: ""
+
     fun getAll(): Flow<List<CashWithdrawal>> =
-        cashWithdrawalDao.getAll().map { list -> list.map { it.toDomain() } }
+        cashWithdrawalDao.getAll(restaurantId).map { list -> list.map { it.toDomain() } }
 
     fun getByDateRange(startTime: Long, endTime: Long): Flow<List<CashWithdrawal>> =
-        cashWithdrawalDao.getByDateRange(startTime, endTime).map { list -> list.map { it.toDomain() } }
+        cashWithdrawalDao.getByDateRange(restaurantId, startTime, endTime).map { list -> list.map { it.toDomain() } }
 
     fun getTotalByDateRange(startTime: Long, endTime: Long): Flow<Long> =
-        cashWithdrawalDao.getTotalByDateRange(startTime, endTime)
+        cashWithdrawalDao.getTotalByDateRange(restaurantId, startTime, endTime)
 
     suspend fun recordWithdrawal(
         userId: String,
@@ -39,21 +48,26 @@ class CashWithdrawalRepository @Inject constructor(
             amount = amount,
             reason = reason,
             date = now,
-            synced = false,
+            restaurantId = restaurantId,
+            syncStatus = SyncStatus.PENDING.name,
             updatedAt = now
         )
 
         cashWithdrawalDao.insert(entity)
 
-        // Enqueue sync
-        syncQueueDao.enqueue(
-            SyncQueueEntity(
-                tableName = "cash_withdrawals",
-                recordId = id,
-                operation = "INSERT",
-                payload = "{\"id\":\"$id\"}"
+        try {
+            syncManager.pushToSupabase("cash_withdrawals", "INSERT", id)
+        } catch (e: Exception) {
+            syncQueueDao.enqueue(
+                SyncQueueEntity(
+                    tableName = "cash_withdrawals",
+                    recordId = id,
+                    operation = "INSERT",
+                    payload = "{\"id\":\"$id\"}"
+                )
             )
-        )
+            syncScheduler.requestImmediateSync()
+        }
 
         return id
     }
@@ -64,6 +78,6 @@ class CashWithdrawalRepository @Inject constructor(
         amount = amount,
         reason = reason,
         date = date,
-        synced = synced
+        syncStatus = SyncStatus.valueOf(syncStatus)
     )
 }

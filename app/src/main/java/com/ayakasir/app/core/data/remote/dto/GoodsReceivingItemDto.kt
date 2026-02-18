@@ -12,6 +12,7 @@ data class GoodsReceivingItemDto(
     val qty: Int,
     @SerialName("cost_per_unit") val costPerUnit: Long,
     val unit: String = "pcs",
-    val synced: Boolean = true,
+    @SerialName("restaurant_id") val restaurantId: String = "",
+    @SerialName("sync_status") val syncStatus: String = "SYNCED",
     @SerialName("updated_at") val updatedAt: Long
 )

@@ -4,12 +4,17 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -29,6 +34,7 @@ import com.ayakasir.app.core.ui.component.PinInputField
 @Composable
 fun LoginScreen(
     onLoginSuccess: () -> Unit,
+    onNavigateBack: () -> Unit,
     viewModel: AuthViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -57,67 +63,82 @@ fun LoginScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = horizontalPadding, vertical = verticalPadding),
-            verticalArrangement = Arrangement.Center,
-            horizontalAlignment = Alignment.CenterHorizontally
+                .padding(horizontal = horizontalPadding, vertical = verticalPadding)
         ) {
-            Text(
-                text = "AyaKasir",
-                style = MaterialTheme.typography.headlineLarge,
-                color = MaterialTheme.colorScheme.primary,
-                fontWeight = FontWeight.Bold
-            )
-
-            Spacer(modifier = Modifier.height(titleSpacing))
-
-            Text(
-                text = "Masukkan PIN untuk masuk",
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-
-            Spacer(modifier = Modifier.height(afterTitleSpacing))
-
-            PinInputField(
-                pinLength = 6,
-                filledCount = uiState.pin.length
-            )
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            if (uiState.error != null) {
-                Text(
-                    text = uiState.error!!,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.error
-                )
-            } else {
-                // Spacer to keep layout stable
-                Text(
-                    text = " ",
-                    style = MaterialTheme.typography.bodyMedium
+            IconButton(
+                onClick = onNavigateBack
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.ArrowBack,
+                    contentDescription = "Kembali"
                 )
             }
 
-            Spacer(modifier = Modifier.height(beforeKeypadSpacing))
-
-            NumericKeypad(
-                onDigitClick = { viewModel.onDigitEntered(it) },
-                onBackspace = { viewModel.onBackspace() },
-                onConfirm = { },
-                modifier = Modifier.widthIn(max = keypadMaxWidth),
-                isCompact = isCompact
-            )
-
-            Spacer(modifier = Modifier.height(afterKeypadSpacing))
-
-            if (uiState.isLoading) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
                 Text(
-                    text = "Memverifikasi...",
-                    style = MaterialTheme.typography.bodySmall,
+                    text = "AyaKasir",
+                    style = MaterialTheme.typography.headlineLarge,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Bold
+                )
+
+                Spacer(modifier = Modifier.height(titleSpacing))
+
+                Text(
+                    text = "Masukkan PIN untuk masuk",
+                    style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+
+                Spacer(modifier = Modifier.height(afterTitleSpacing))
+
+                PinInputField(
+                    pinLength = 6,
+                    filledCount = uiState.pin.length
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                if (uiState.error != null) {
+                    Text(
+                        text = uiState.error!!,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                } else {
+                    // Spacer to keep layout stable
+                    Text(
+                        text = " ",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(beforeKeypadSpacing))
+
+                NumericKeypad(
+                    onDigitClick = { viewModel.onDigitEntered(it) },
+                    onBackspace = { viewModel.onBackspace() },
+                    onConfirm = { },
+                    modifier = Modifier.widthIn(max = keypadMaxWidth),
+                    isCompact = isCompact
+                )
+
+                Spacer(modifier = Modifier.height(afterKeypadSpacing))
+
+                if (uiState.isLoading) {
+                    Text(
+                        text = "Memverifikasi...",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
         }
     }

@@ -9,6 +9,7 @@ data class VendorDto(
     val name: String,
     val phone: String? = null,
     val address: String? = null,
-    val synced: Boolean = true,
+    @SerialName("restaurant_id") val restaurantId: String = "",
+    @SerialName("sync_status") val syncStatus: String = "SYNCED",
     @SerialName("updated_at") val updatedAt: Long
 )

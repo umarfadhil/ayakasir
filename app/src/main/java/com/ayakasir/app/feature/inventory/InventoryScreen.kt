@@ -14,10 +14,12 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -29,12 +31,14 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.ayakasir.app.core.domain.model.InventoryItem
 import com.ayakasir.app.core.ui.component.ConfirmDialog
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun InventoryScreen(
     viewModel: InventoryViewModel = hiltViewModel()
 ) {
     val groupedInventory by viewModel.groupedInventory.collectAsStateWithLifecycle()
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val isRefreshing by viewModel.isRefreshing.collectAsStateWithLifecycle()
 
     Column(
         modifier = Modifier
@@ -48,6 +52,11 @@ fun InventoryScreen(
         )
         Spacer(modifier = Modifier.height(16.dp))
 
+        PullToRefreshBox(
+            isRefreshing = isRefreshing,
+            onRefresh = { viewModel.refresh() },
+            modifier = Modifier.fillMaxSize()
+        ) {
         if (groupedInventory.isEmpty()) {
             Box(
                 modifier = Modifier.fillMaxSize(),
@@ -76,6 +85,7 @@ fun InventoryScreen(
                 }
             }
         }
+        } // PullToRefreshBox
     }
 
     // Adjust stock dialog

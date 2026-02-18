@@ -34,6 +34,6 @@ interface VariantDao {
     @Query("DELETE FROM variants WHERE product_id = :productId")
     suspend fun deleteByProductId(productId: String)
 
-    @Query("UPDATE variants SET synced = 1 WHERE id = :id")
+    @Query("UPDATE variants SET sync_status = 'SYNCED' WHERE id = :id")
     suspend fun markSynced(id: String)
 }

@@ -13,6 +13,8 @@ import com.ayakasir.app.core.domain.model.GoodsReceivingItem
 import com.ayakasir.app.core.domain.model.Product
 import com.ayakasir.app.core.domain.model.ProductType
 import com.ayakasir.app.core.domain.model.Vendor
+import com.ayakasir.app.core.session.SessionManager
+import com.ayakasir.app.core.sync.SyncManager
 import com.ayakasir.app.core.util.UuidGenerator
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -29,8 +31,13 @@ class PurchasingViewModel @Inject constructor(
     private val vendorRepository: VendorRepository,
     private val purchasingRepository: PurchasingRepository,
     private val productRepository: ProductRepository,
-    private val categoryRepository: CategoryRepository
+    private val categoryRepository: CategoryRepository,
+    private val syncManager: SyncManager,
+    private val sessionManager: SessionManager
 ) : ViewModel() {
+
+    private val _isRefreshing = MutableStateFlow(false)
+    val isRefreshing: StateFlow<Boolean> = _isRefreshing.asStateFlow()
 
     data class VendorFormState(
         val name: String = "",
@@ -44,6 +51,7 @@ class PurchasingViewModel @Inject constructor(
     data class ReceivingFormState(
         val receivingId: String? = null,
         val vendorId: String? = null,
+        val date: Long = System.currentTimeMillis(),
         val notes: String = "",
         val items: List<AddedItem> = emptyList(),
         val isLoading: Boolean = false,
@@ -136,6 +144,7 @@ class PurchasingViewModel @Inject constructor(
     }
 
     fun onReceivingVendorChange(vendorId: String) { _receivingForm.update { it.copy(vendorId = vendorId) } }
+    fun onReceivingDateChange(value: Long) { _receivingForm.update { it.copy(date = value) } }
     fun onReceivingNotesChange(value: String) { _receivingForm.update { it.copy(notes = value) } }
 
     fun showAddVendorForm() { _receivingForm.update { it.copy(showAddVendor = true) } }
@@ -274,10 +283,10 @@ class PurchasingViewModel @Inject constructor(
             try {
                 if (form.receivingId != null) {
                     // Update existing receiving
-                    purchasingRepository.updateReceiving(form.receivingId, form.vendorId, form.notes.ifBlank { null }, items)
+                    purchasingRepository.updateReceiving(form.receivingId, form.vendorId, form.date, form.notes.ifBlank { null }, items)
                 } else {
                     // Create new receiving
-                    purchasingRepository.createReceiving(form.vendorId, form.notes.ifBlank { null }, items)
+                    purchasingRepository.createReceiving(form.vendorId, form.date, form.notes.ifBlank { null }, items)
                 }
                 _receivingForm.update { it.copy(isLoading = false, isSaved = true) }
             } catch (e: Exception) {
@@ -311,6 +320,7 @@ class PurchasingViewModel @Inject constructor(
                     it.copy(
                         receivingId = receivingId,
                         vendorId = receiving.vendorId,
+                        date = receiving.date,
                         notes = receiving.notes ?: "",
                         items = addedItems
                     )
@@ -335,5 +345,17 @@ class PurchasingViewModel @Inject constructor(
     fun resetReceivingForm() {
         _receivingForm.value = ReceivingFormState()
         _currentItemInput.value = CurrentItemInput()
+    }
+
+    fun refresh() {
+        val restaurantId = sessionManager.currentRestaurantId ?: return
+        viewModelScope.launch {
+            _isRefreshing.value = true
+            try {
+                syncManager.pullAllFromSupabase(restaurantId)
+            } finally {
+                _isRefreshing.value = false
+            }
+        }
     }
 }

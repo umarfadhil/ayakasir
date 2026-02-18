@@ -18,6 +18,7 @@ import com.ayakasir.app.core.domain.model.Variant
 import com.ayakasir.app.core.payment.PaymentGateway
 import com.ayakasir.app.core.payment.PaymentResult
 import com.ayakasir.app.core.session.SessionManager
+import com.ayakasir.app.core.sync.SyncManager
 import com.ayakasir.app.core.util.CurrencyFormatter
 import com.ayakasir.app.core.util.UuidGenerator
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -40,6 +41,7 @@ class PosViewModel @Inject constructor(
     private val cashWithdrawalRepository: CashWithdrawalRepository,
     private val cashBalanceRepository: CashBalanceRepository,
     private val sessionManager: SessionManager,
+    private val syncManager: SyncManager,
     private val paymentGateway: PaymentGateway,
     private val qrisSettingsDataStore: QrisSettingsDataStore
 ) : ViewModel() {
@@ -77,6 +79,9 @@ class PosViewModel @Inject constructor(
         val cartItemCount: Int get() = cart.sumOf { it.qty }
     }
 
+    private val _isRefreshing = MutableStateFlow(false)
+    val isRefreshing: StateFlow<Boolean> = _isRefreshing.asStateFlow()
+
     private val _uiState = MutableStateFlow(PosUiState())
     val uiState: StateFlow<PosUiState> = _uiState.asStateFlow()
 
@@ -96,6 +101,18 @@ class PosViewModel @Inject constructor(
 
     val isQrisConfigured: StateFlow<Boolean> = qrisSettingsDataStore.isConfigured
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
+    fun refresh() {
+        val restaurantId = sessionManager.currentRestaurantId ?: return
+        viewModelScope.launch {
+            _isRefreshing.value = true
+            try {
+                syncManager.pullAllFromSupabase(restaurantId)
+            } finally {
+                _isRefreshing.value = false
+            }
+        }
+    }
 
     fun selectCategory(categoryId: String?) {
         _selectedCategoryId.value = categoryId

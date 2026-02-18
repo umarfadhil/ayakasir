@@ -21,8 +21,8 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         // Supabase placeholders -- replace with actual values
-        buildConfigField("String", "SUPABASE_URL", "\"https://tlkykpcznaieulbwkapc.supabase.co\"")
-        buildConfigField("String", "SUPABASE_ANON_KEY", "\"sb_publishable_pm2BgUl2ADoJn46v4QnK8w_KEYojx_6\"")
+        buildConfigField("String", "SUPABASE_URL", "\"PLACE_HERE\"")
+        buildConfigField("String", "SUPABASE_ANON_KEY", "\"PLACE_HERE\"")
 
         ksp {
             arg("room.schemaLocation", "$projectDir/schemas")

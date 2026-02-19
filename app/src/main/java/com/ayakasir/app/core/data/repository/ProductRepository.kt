@@ -98,6 +98,21 @@ class ProductRepository @Inject constructor(
             )
             syncScheduler.requestImmediateSync()
         }
+
+        // Push variants directly from memory (avoids read-after-write timing issue)
+        if (variants.isNotEmpty()) {
+            try {
+                syncManager.pushVariantsDirect(variants)
+            } catch (e: Exception) {
+                variants.forEach { v ->
+                    syncQueueDao.enqueue(
+                        SyncQueueEntity(tableName = "variants", recordId = v.id, operation = "INSERT", payload = "{\"id\":\"${v.id}\"}")
+                    )
+                }
+                syncScheduler.requestImmediateSync()
+            }
+        }
+
         return getProductById(productId)!!
     }
 
@@ -116,6 +131,9 @@ class ProductRepository @Inject constructor(
             name = name, categoryId = categoryId, description = description, price = price,
             imagePath = imagePath, productType = productType.name, syncStatus = SyncStatus.PENDING.name, updatedAt = System.currentTimeMillis()
         ))
+
+        // Collect old variant IDs before deleting locally
+        val oldVariants = variantDao.getByProductIdDirect(productId)
 
         // Replace variants
         variantDao.deleteByProductId(productId)
@@ -138,9 +156,38 @@ class ProductRepository @Inject constructor(
             )
             syncScheduler.requestImmediateSync()
         }
+
+        // Delete old variants from Supabase by product_id (bulk, avoids stale ID mismatch)
+        try {
+            syncManager.deleteVariantsByProductId(productId)
+        } catch (e: Exception) {
+            oldVariants.forEach { v ->
+                syncQueueDao.enqueue(
+                    SyncQueueEntity(tableName = "variants", recordId = v.id, operation = "DELETE", payload = "{\"id\":\"${v.id}\"}")
+                )
+            }
+            syncScheduler.requestImmediateSync()
+        }
+
+        // Push new variants directly from memory
+        if (variants.isNotEmpty()) {
+            try {
+                syncManager.pushVariantsDirect(variants)
+            } catch (e: Exception) {
+                variants.forEach { v ->
+                    syncQueueDao.enqueue(
+                        SyncQueueEntity(tableName = "variants", recordId = v.id, operation = "INSERT", payload = "{\"id\":\"${v.id}\"}")
+                    )
+                }
+                syncScheduler.requestImmediateSync()
+            }
+        }
     }
 
     suspend fun deleteProduct(productId: String) {
+        // Collect variant IDs before cascade delete
+        val variants = variantDao.getByProductIdDirect(productId)
+
         productDao.deleteById(productId)
 
         try {
@@ -150,6 +197,18 @@ class ProductRepository @Inject constructor(
                 SyncQueueEntity(tableName = "products", recordId = productId, operation = "DELETE", payload = "{\"id\":\"$productId\"}")
             )
             syncScheduler.requestImmediateSync()
+        }
+
+        // Sync variant deletions
+        variants.forEach { v ->
+            try {
+                syncManager.pushToSupabase("variants", "DELETE", v.id)
+            } catch (e: Exception) {
+                syncQueueDao.enqueue(
+                    SyncQueueEntity(tableName = "variants", recordId = v.id, operation = "DELETE", payload = "{\"id\":\"${v.id}\"}")
+                )
+                syncScheduler.requestImmediateSync()
+            }
         }
     }
 

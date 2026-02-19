@@ -12,9 +12,11 @@ import com.ayakasir.app.core.domain.model.UserFeature
 import com.ayakasir.app.core.domain.model.UserFeatureAccess
 import com.ayakasir.app.core.domain.model.UserRole
 import com.ayakasir.app.core.session.PinHasher
+import com.ayakasir.app.core.session.SessionManager
 import com.ayakasir.app.core.sync.SyncManager
 import com.ayakasir.app.core.sync.SyncScheduler
 import com.ayakasir.app.core.util.UuidGenerator
+import android.util.Log
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.postgrest.from
 import kotlinx.coroutines.flow.Flow
@@ -28,7 +30,8 @@ class UserRepository @Inject constructor(
     private val syncQueueDao: SyncQueueDao,
     private val syncScheduler: SyncScheduler,
     private val syncManager: SyncManager,
-    private val supabaseClient: SupabaseClient
+    private val supabaseClient: SupabaseClient,
+    private val sessionManager: SessionManager
 ) {
     fun getAllUsers(): Flow<List<User>> = userDao.getAll().map { list ->
         list.map { it.toDomain() }
@@ -60,9 +63,10 @@ class UserRepository @Inject constructor(
      * Falls back to local cache if network fails.
      */
     suspend fun getUserByEmailRemote(email: String): User? {
+        val normalizedEmail = email.trim().lowercase()
         try {
             val dtos = supabaseClient.from("users")
-                .select { filter { eq("email", email) } }
+                .select { filter { ilike("email", normalizedEmail) } }
                 .decodeList<UserDto>()
             val dto = dtos.firstOrNull()
             if (dto != null) {
@@ -70,10 +74,10 @@ class UserRepository @Inject constructor(
                 userDao.insert(entity)
                 return entity.toDomain()
             }
-        } catch (_: Exception) {
-            // Network failure — fall back to local cache
+        } catch (e: Exception) {
+            Log.w("UserRepository", "Supabase fetch failed for getUserByEmailRemote: ${e.message}")
         }
-        return userDao.getByEmail(email)?.toDomain()
+        return userDao.getByEmail(normalizedEmail)?.toDomain()
     }
 
     suspend fun seedDefaultOwner() {
@@ -94,12 +98,18 @@ class UserRepository @Inject constructor(
 
     suspend fun createUser(
         name: String,
+        email: String = "",
+        phone: String = "",
+        password: String = "",
         pin: String,
         role: UserRole,
         featureAccess: Set<UserFeature> = emptySet()
     ): User {
-        val salt = PinHasher.generateSalt()
-        val hash = PinHasher.hash(pin, salt)
+        val normalizedEmail = email.trim().lowercase()
+        val pinSaltVal = PinHasher.generateSalt()
+        val pinHashVal = PinHasher.hash(pin, pinSaltVal)
+        val pwSalt = if (password.isNotBlank()) PinHasher.generateSalt() else null
+        val pwHash = if (password.isNotBlank() && pwSalt != null) PinHasher.hash(password, pwSalt) else null
         val accessValue = if (role == UserRole.CASHIER) {
             UserFeatureAccess.serialize(featureAccess)
         } else {
@@ -108,9 +118,14 @@ class UserRepository @Inject constructor(
         val entity = UserEntity(
             id = UuidGenerator.generate(),
             name = name,
-            pinHash = hash,
-            pinSalt = salt,
+            email = normalizedEmail.ifBlank { null },
+            phone = phone.trim().ifBlank { null },
+            pinHash = pinHashVal,
+            pinSalt = pinSaltVal,
+            passwordHash = pwHash,
+            passwordSalt = pwSalt,
             role = role.name,
+            restaurantId = sessionManager.currentRestaurantId,
             featureAccess = accessValue,
             syncStatus = SyncStatus.PENDING.name,
             updatedAt = System.currentTimeMillis()
@@ -132,6 +147,19 @@ class UserRepository @Inject constructor(
             syncScheduler.requestImmediateSync()
         }
         return entity.toDomain()
+    }
+
+    suspend fun deleteUser(userId: String) {
+        userDao.deleteById(userId)
+        try {
+            syncManager.pushToSupabase("users", "DELETE", userId)
+        } catch (e: Exception) {
+            Log.w("UserRepository", "deleteUser push failed: ${e.message}")
+            syncQueueDao.enqueue(
+                SyncQueueEntity(tableName = "users", recordId = userId, operation = "DELETE", payload = "{\"id\":\"$userId\"}")
+            )
+            syncScheduler.requestImmediateSync()
+        }
     }
 
     suspend fun updateUser(
@@ -212,23 +240,26 @@ class UserRepository @Inject constructor(
      * Returns User if credentials valid and is_active = true, null otherwise.
      */
     suspend fun authenticateByEmail(email: String, password: String): AuthResult {
+        val normalizedEmail = email.trim().lowercase()
+
         // Fetch latest user data from Supabase (source of truth)
         var fetchedEntity: UserEntity? = null
         try {
             val dtos = supabaseClient.from("users")
-                .select { filter { eq("email", email) } }
+                .select { filter { ilike("email", normalizedEmail) } }
                 .decodeList<UserDto>()
             val dto = dtos.firstOrNull()
             if (dto != null) {
                 fetchedEntity = dto.toEntity()
                 userDao.insert(fetchedEntity)
             }
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            Log.w("UserRepository", "Supabase fetch failed for login: ${e.message}")
             // Network failure — fall back to local cache
         }
 
         // Use Supabase data directly if available, otherwise fall back to local cache
-        val entity = fetchedEntity ?: userDao.getByEmail(email) ?: return AuthResult.NotFound
+        val entity = fetchedEntity ?: userDao.getByEmail(normalizedEmail) ?: return AuthResult.NotFound
         if (!entity.isActive) return AuthResult.Inactive
 
         val pwSalt = entity.passwordSalt
@@ -255,6 +286,7 @@ class UserRepository @Inject constructor(
         password: String,
         restaurantId: String
     ): User {
+        val normalizedEmail = email.trim().lowercase()
         val pinSaltVal = PinHasher.generateSalt()
         val pinHashVal = PinHasher.hash(pin, pinSaltVal)
         val pwSalt = PinHasher.generateSalt()
@@ -262,7 +294,7 @@ class UserRepository @Inject constructor(
         val entity = UserEntity(
             id = UuidGenerator.generate(),
             name = name,
-            email = email,
+            email = normalizedEmail,
             phone = phone,
             pinHash = pinHashVal,
             pinSalt = pinSaltVal,
@@ -279,12 +311,13 @@ class UserRepository @Inject constructor(
         try {
             syncManager.pushToSupabase("users", "INSERT", entity.id)
         } catch (e: Exception) {
+            Log.w("UserRepository", "registerOwner push failed: ${e.message}")
             syncQueueDao.enqueue(
                 SyncQueueEntity(
                     tableName = "users",
                     recordId = entity.id,
                     operation = "INSERT",
-                    payload = "{\"id\":\"${entity.id}\",\"name\":\"$name\",\"email\":\"$email\",\"phone\":\"$phone\",\"role\":\"${UserRole.OWNER.name}\"}"
+                    payload = "{\"id\":\"${entity.id}\",\"name\":\"$name\",\"email\":\"$normalizedEmail\",\"phone\":\"$phone\",\"role\":\"${UserRole.OWNER.name}\"}"
                 )
             )
             syncScheduler.requestImmediateSync()

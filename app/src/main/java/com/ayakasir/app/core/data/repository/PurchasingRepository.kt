@@ -15,6 +15,7 @@ import com.ayakasir.app.core.domain.model.SyncStatus
 import com.ayakasir.app.core.session.SessionManager
 import com.ayakasir.app.core.sync.SyncManager
 import com.ayakasir.app.core.sync.SyncScheduler
+import com.ayakasir.app.core.util.UnitConverter
 import com.ayakasir.app.core.util.UuidGenerator
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -124,17 +125,30 @@ class PurchasingRepository @Inject constructor(
         }
         goodsReceivingDao.insertItems(itemEntities)
 
-        // Increment inventory for each item
+        // Increment inventory for each item (normalize to base unit)
         val inventorySyncEntries = mutableListOf<SyncQueueEntity>()
         items.forEach { item ->
+            val (normalizedQty, baseUnit) = UnitConverter.normalizeToBase(item.qty, item.unit)
             val existing = inventoryDao.get(item.productId, item.variantId)
             if (existing != null) {
-                inventoryDao.incrementStock(item.productId, item.variantId, item.qty, now)
+                if (UnitConverter.areCompatible(item.unit, existing.unit)) {
+                    val addQty = UnitConverter.convert(item.qty, item.unit, existing.unit)
+                    inventoryDao.incrementStock(item.productId, item.variantId, addQty, now)
+                } else {
+                    // Incompatible units: update inventory unit to base unit so unit column matches
+                    inventoryDao.insert(existing.copy(
+                        currentQty = existing.currentQty + normalizedQty,
+                        unit = baseUnit,
+                        syncStatus = SyncStatus.PENDING.name,
+                        updatedAt = now
+                    ))
+                }
             } else {
                 inventoryDao.insert(InventoryEntity(
                     productId = item.productId,
                     variantId = item.variantId,
-                    currentQty = item.qty,
+                    currentQty = normalizedQty,
+                    unit = baseUnit,
                     restaurantId = restaurantId
                 ))
             }
@@ -183,12 +197,17 @@ class PurchasingRepository @Inject constructor(
         // Get old items via direct query to avoid @Relation empty-list bug
         val oldItems = goodsReceivingDao.getItemsByReceivingId(receivingId)
 
-        // Revert old inventory changes
+        // Revert old inventory changes (normalize to base unit)
         val inventorySyncEntries = mutableListOf<SyncQueueEntity>()
         oldItems.forEach { oldItem ->
             val existing = inventoryDao.get(oldItem.productId, oldItem.variantId)
             if (existing != null) {
-                inventoryDao.incrementStock(oldItem.productId, oldItem.variantId, -oldItem.qty, now)
+                val revertQty = if (UnitConverter.areCompatible(oldItem.unit, existing.unit)) {
+                    UnitConverter.convert(oldItem.qty, oldItem.unit, existing.unit)
+                } else {
+                    UnitConverter.normalizeToBase(oldItem.qty, oldItem.unit).first
+                }
+                inventoryDao.incrementStock(oldItem.productId, oldItem.variantId, -revertQty, now)
                 inventorySyncEntries.add(
                     SyncQueueEntity(
                         tableName = "inventory",
@@ -230,16 +249,29 @@ class PurchasingRepository @Inject constructor(
         }
         goodsReceivingDao.insertItems(itemEntities)
 
-        // Apply new inventory changes
+        // Apply new inventory changes (normalize to base unit)
         newItems.forEach { item ->
+            val (normalizedQty, baseUnit) = UnitConverter.normalizeToBase(item.qty, item.unit)
             val existing = inventoryDao.get(item.productId, item.variantId)
             if (existing != null) {
-                inventoryDao.incrementStock(item.productId, item.variantId, item.qty, now)
+                if (UnitConverter.areCompatible(item.unit, existing.unit)) {
+                    val addQty = UnitConverter.convert(item.qty, item.unit, existing.unit)
+                    inventoryDao.incrementStock(item.productId, item.variantId, addQty, now)
+                } else {
+                    // Incompatible units: update inventory unit to base unit so unit column matches
+                    inventoryDao.insert(existing.copy(
+                        currentQty = existing.currentQty + normalizedQty,
+                        unit = baseUnit,
+                        syncStatus = SyncStatus.PENDING.name,
+                        updatedAt = now
+                    ))
+                }
             } else {
                 inventoryDao.insert(InventoryEntity(
                     productId = item.productId,
                     variantId = item.variantId,
-                    currentQty = item.qty,
+                    currentQty = normalizedQty,
+                    unit = baseUnit,
                     restaurantId = restaurantId
                 ))
             }
@@ -280,18 +312,17 @@ class PurchasingRepository @Inject constructor(
         // Get items before deleting (use direct query, not @Relation)
         val receivingItems = goodsReceivingDao.getItemsByReceivingId(receivingId)
 
-        // Decrement inventory for each item
+        // Decrement inventory for each item (convert to inventory's base unit)
         val inventorySyncEntries = mutableListOf<SyncQueueEntity>()
         receivingItems.forEach { itemEntity ->
             val existing = inventoryDao.get(itemEntity.productId, itemEntity.variantId)
             if (existing != null) {
-                val newQty = (existing.currentQty - itemEntity.qty).coerceAtLeast(0)
-                if (newQty > 0) {
-                    inventoryDao.incrementStock(itemEntity.productId, itemEntity.variantId, -itemEntity.qty, now)
+                val revertQty = if (UnitConverter.areCompatible(itemEntity.unit, existing.unit)) {
+                    UnitConverter.convert(itemEntity.qty, itemEntity.unit, existing.unit)
                 } else {
-                    // If quantity reaches 0, we can either delete or keep it at 0
-                    inventoryDao.incrementStock(itemEntity.productId, itemEntity.variantId, -itemEntity.qty, now)
+                    UnitConverter.normalizeToBase(itemEntity.qty, itemEntity.unit).first
                 }
+                inventoryDao.incrementStock(itemEntity.productId, itemEntity.variantId, -revertQty, now)
                 inventorySyncEntries.add(
                     SyncQueueEntity(
                         tableName = "inventory",

@@ -31,9 +31,12 @@ interface UserDao {
     @Query("SELECT * FROM users WHERE is_active = 1")
     suspend fun getAllActiveDirect(): List<UserEntity>
 
-    @Query("SELECT * FROM users WHERE email = :email LIMIT 1")
+    @Query("SELECT * FROM users WHERE LOWER(email) = LOWER(:email) LIMIT 1")
     suspend fun getByEmail(email: String): UserEntity?
 
     @Query("UPDATE users SET sync_status = 'SYNCED' WHERE id = :id")
     suspend fun markSynced(id: String)
+
+    @Query("DELETE FROM users WHERE id = :id")
+    suspend fun deleteById(id: String)
 }

@@ -11,7 +11,7 @@
 - **Inventory:** Stock tracking with product components
 - **Purchasing:** Vendor management & goods receiving
 - **Products:** Menu/raw materials with categories & variants
-- **Cash Management:** Balance tracking & withdrawals
+- **Cash Management:** General ledger-based balance tracking, initial balance, withdrawals, adjustments
 - **Reporting:** Dashboard with sales analytics
 - **Settings:** Printer (Bluetooth), QRIS placeholder, users
 
@@ -21,6 +21,7 @@
 - **Database:** Room (local cache & offline resilience, not source of truth)
 - **Source of Truth**: Supabase Postgres
 - **Sync:** Supabase Realtime (Postgres Changes → Room upsert → auto UI update) + pull-to-refresh fallback + pull on login + push on write + background push+pull (WorkManager, every 15 min)
+- **Storage:** Supabase Storage (bucket: `qris-images`) for QRIS image files
 - **UI:** Jetpack Compose + Material3 adaptive layouts
 - **Navigation:** Type-safe Compose Navigation 2.8+ (@Serializable sealed interface)
 - **Backend:** Supabase (PostgREST + Storage). Password validated locally via hash (no Supabase Auth dependency).
@@ -37,12 +38,18 @@
   - Registration: Both `restaurants` and `users` tables default `is_active = false`. Requires admin activation.
   - No dependency on Supabase Auth module — password and PIN both validated locally against hashes in `users` table.
 - Printer: 58mm ESC/POS Bluetooth
+- Unit Conversion:
+  - Inventory stores quantities in base units: g (mass), mL (volume), pcs (count).
+  - Purchasing normalizes input to base unit at storage time (1 kg → 1000 g).
+  - Stock decrement converts component unit to inventory base unit before subtraction.
+  - Supported: kg ↔ g (×1000), L ↔ mL (×1000).
+  - `UnitConverter` utility handles normalization, conversion, and display formatting.
 - Sync Metadata:
   - Every entity has `updatedAt: Long`.
   - Sync state uses enum:
     { PENDING, SYNCING, SYNCED, FAILED, CONFLICT }.
 - Offline & Sync:
-  - **Realtime:** Supabase Realtime (Postgres Changes) subscribes to all 11 tenant tables via WebSocket → upserts to Room → Room Flow auto-emits to UI. Connected on login, disconnected on logout.
+  - **Realtime:** Supabase Realtime (Postgres Changes) subscribes to all 12 tenant tables via WebSocket → upserts to Room → Room Flow auto-emits to UI. Connected on login, disconnected on logout.
   - **Pull-to-refresh:** All data screens (POS, Dashboard, Inventory, Products, Categories, Vendors, Goods Receiving) support swipe-to-refresh via Material3 PullToRefreshBox. Triggers `SyncManager.pullAllFromSupabase()`.
   - Every write attempts immediate server push.
   - On failure → enqueue to SyncQueue.
@@ -56,7 +63,10 @@
 - Java 17 target
 - ProGuard enabled for release
 - Debug variant: `.debug` suffix
-- Room DB version: 12
+- Room DB version: 15
+- Supabase credentials: loaded from `local.properties` (gitignored), NOT hardcoded in `build.gradle.kts`
+  - Keys: `SUPABASE_URL`, `SUPABASE_ANON_KEY`
+  - Accessed via `BuildConfig.SUPABASE_URL`, `BuildConfig.SUPABASE_ANON_KEY`
 
 ## Identity, Roles & Tenancy
 - Tenant:

@@ -9,9 +9,12 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
@@ -30,6 +33,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -57,10 +61,16 @@ fun UserManagementScreen(
 ) {
     val users by viewModel.users.collectAsStateWithLifecycle()
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val isRefreshing by viewModel.isRefreshing.collectAsStateWithLifecycle()
 
     var showAddDialog by remember { mutableStateOf(false) }
     var editingUser by remember { mutableStateOf<User?>(null) }
+    var showDeleteConfirm by remember { mutableStateOf(false) }
+
     var name by remember { mutableStateOf("") }
+    var email by remember { mutableStateOf("") }
+    var phone by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
     var pin by remember { mutableStateOf("") }
     var role by remember { mutableStateOf(UserRole.CASHIER) }
     var selectedFeatures by remember { mutableStateOf(UserFeatureAccess.defaultCashierFeatures) }
@@ -72,6 +82,9 @@ fun UserManagementScreen(
 
     val resetForm = {
         name = ""
+        email = ""
+        phone = ""
+        password = ""
         pin = ""
         role = UserRole.CASHIER
         selectedFeatures = UserFeatureAccess.defaultCashierFeatures
@@ -79,15 +92,14 @@ fun UserManagementScreen(
     }
 
     LaunchedEffect(showAddDialog) {
-        if (showAddDialog) {
-            resetForm()
-        }
+        if (showAddDialog) resetForm()
     }
 
     LaunchedEffect(uiState.saveSuccessCounter) {
         if (uiState.saveSuccessCounter > 0) {
             showAddDialog = false
             editingUser = null
+            showDeleteConfirm = false
         }
     }
 
@@ -123,37 +135,44 @@ fun UserManagementScreen(
             }
         }
     ) { padding ->
-        Column(
+        PullToRefreshBox(
+            isRefreshing = isRefreshing,
+            onRefresh = { viewModel.refresh() },
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .padding(24.dp)
         ) {
-            Text(
-                text = "Daftar User",
-                style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.Bold
-            )
-            Spacer(modifier = Modifier.height(16.dp))
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(24.dp)
+            ) {
+                Text(
+                    text = "Daftar User",
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(modifier = Modifier.height(16.dp))
 
-            if (users.isEmpty()) {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text(
-                        text = "Belum ada user",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            } else {
-                LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    items(users, key = { it.id }) { user ->
-                        UserCard(
-                            user = user,
-                            onClick = {
-                                showAddDialog = false
-                                editingUser = user
-                            }
+                if (users.isEmpty()) {
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text(
+                            text = "Belum ada user",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                    }
+                } else {
+                    LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        items(users, key = { it.id }) { user ->
+                            UserCard(
+                                user = user,
+                                onClick = {
+                                    showAddDialog = false
+                                    editingUser = user
+                                }
+                            )
+                        }
                     }
                 }
             }
@@ -163,12 +182,18 @@ fun UserManagementScreen(
     if (showAddDialog) {
         AddUserDialog(
             name = name,
+            email = email,
+            phone = phone,
+            password = password,
             pin = pin,
             role = role,
             selectedFeatures = selectedFeatures,
             isSaving = uiState.isSaving,
             error = uiState.error,
             onNameChange = { name = it },
+            onEmailChange = { email = it },
+            onPhoneChange = { phone = it },
+            onPasswordChange = { password = it },
             onPinChange = { input -> pin = input.filter { it.isDigit() }.take(6) },
             onRoleChange = { newRole ->
                 role = newRole
@@ -187,6 +212,9 @@ fun UserManagementScreen(
             onSave = {
                 viewModel.createUser(
                     name = name,
+                    email = email,
+                    phone = phone,
+                    password = password,
                     pin = pin,
                     role = role,
                     featureAccess = selectedFeatures
@@ -196,44 +224,66 @@ fun UserManagementScreen(
     }
 
     editingUser?.let { user ->
-        EditUserDialog(
-            name = editName,
-            pin = editPin,
-            role = editRole,
-            selectedFeatures = editFeatures,
-            isSaving = uiState.isSaving,
-            error = uiState.error,
-            onNameChange = { editName = it },
-            onPinChange = { input -> editPin = input.filter { it.isDigit() }.take(6) },
-            onRoleChange = { newRole ->
-                editRole = newRole
-                editFeatures = when (newRole) {
-                    UserRole.OWNER -> emptySet()
-                    UserRole.CASHIER -> if (editFeatures.isEmpty()) {
-                        UserFeatureAccess.defaultCashierFeatures
-                    } else {
-                        editFeatures
+        if (showDeleteConfirm) {
+            AlertDialog(
+                onDismissRequest = { showDeleteConfirm = false },
+                title = { Text("Hapus User") },
+                text = { Text("Hapus user \"${user.name}\"? Tindakan ini tidak dapat dibatalkan.") },
+                confirmButton = {
+                    TextButton(
+                        onClick = { viewModel.deleteUser(user.id) },
+                        enabled = !uiState.isSaving
+                    ) {
+                        Text("Hapus", color = MaterialTheme.colorScheme.error)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showDeleteConfirm = false }) {
+                        Text("Batal")
                     }
                 }
-            },
-            onToggleFeature = { feature ->
-                editFeatures = if (editFeatures.contains(feature)) {
-                    editFeatures - feature
-                } else {
-                    editFeatures + feature
+            )
+        } else {
+            EditUserDialog(
+                name = editName,
+                pin = editPin,
+                role = editRole,
+                selectedFeatures = editFeatures,
+                isSaving = uiState.isSaving,
+                error = uiState.error,
+                onNameChange = { editName = it },
+                onPinChange = { input -> editPin = input.filter { it.isDigit() }.take(6) },
+                onRoleChange = { newRole ->
+                    editRole = newRole
+                    editFeatures = when (newRole) {
+                        UserRole.OWNER -> emptySet()
+                        UserRole.CASHIER -> if (editFeatures.isEmpty()) {
+                            UserFeatureAccess.defaultCashierFeatures
+                        } else {
+                            editFeatures
+                        }
+                    }
+                },
+                onToggleFeature = { feature ->
+                    editFeatures = if (editFeatures.contains(feature)) {
+                        editFeatures - feature
+                    } else {
+                        editFeatures + feature
+                    }
+                },
+                onDismiss = { editingUser = null },
+                onDelete = { showDeleteConfirm = true },
+                onSave = {
+                    viewModel.updateUser(
+                        userId = user.id,
+                        name = editName,
+                        role = editRole,
+                        featureAccess = editFeatures,
+                        newPin = editPin.takeIf { it.isNotBlank() }
+                    )
                 }
-            },
-            onDismiss = { editingUser = null },
-            onSave = {
-                viewModel.updateUser(
-                    userId = user.id,
-                    name = editName,
-                    role = editRole,
-                    featureAccess = editFeatures,
-                    newPin = editPin.takeIf { it.isNotBlank() }
-                )
-            }
-        )
+            )
+        }
     }
 }
 
@@ -298,12 +348,18 @@ private fun UserCard(
 @Composable
 private fun AddUserDialog(
     name: String,
+    email: String,
+    phone: String,
+    password: String,
     pin: String,
     role: UserRole,
     selectedFeatures: Set<UserFeature>,
     isSaving: Boolean,
     error: String?,
     onNameChange: (String) -> Unit,
+    onEmailChange: (String) -> Unit,
+    onPhoneChange: (String) -> Unit,
+    onPasswordChange: (String) -> Unit,
     onPinChange: (String) -> Unit,
     onRoleChange: (UserRole) -> Unit,
     onToggleFeature: (UserFeature) -> Unit,
@@ -319,13 +375,53 @@ private fun AddUserDialog(
         onDismissRequest = { if (!isSaving) onDismiss() },
         title = { Text("Tambah User") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(
+                modifier = Modifier
+                    .heightIn(max = 480.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
                 OutlinedTextField(
                     value = name,
                     onValueChange = onNameChange,
                     label = { Text("Nama") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
+                )
+
+                OutlinedTextField(
+                    value = email,
+                    onValueChange = onEmailChange,
+                    label = { Text("Email (opsional)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                        keyboardType = KeyboardType.Email
+                    )
+                )
+
+                OutlinedTextField(
+                    value = phone,
+                    onValueChange = onPhoneChange,
+                    label = { Text("No. Telepon (opsional)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                        keyboardType = KeyboardType.Phone
+                    )
+                )
+
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = onPasswordChange,
+                    label = { Text("Password (opsional)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                        keyboardType = KeyboardType.Password
+                    ),
+                    visualTransformation = PasswordVisualTransformation(),
+                    supportingText = { Text("Untuk login dengan email di perangkat lain") }
                 )
 
                 OutlinedTextField(
@@ -338,15 +434,10 @@ private fun AddUserDialog(
                         keyboardType = KeyboardType.NumberPassword
                     ),
                     visualTransformation = PasswordVisualTransformation(),
-                    supportingText = {
-                        Text("Gunakan 6 digit angka")
-                    }
+                    supportingText = { Text("Gunakan 6 digit angka") }
                 )
 
-                Text(
-                    text = "Role",
-                    style = MaterialTheme.typography.labelMedium
-                )
+                Text(text = "Role", style = MaterialTheme.typography.labelMedium)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChip(
                         selected = role == UserRole.OWNER,
@@ -361,11 +452,8 @@ private fun AddUserDialog(
                 }
 
                 if (role == UserRole.CASHIER) {
-                    Text(
-                        text = "Akses Fitur",
-                        style = MaterialTheme.typography.labelMedium
-                    )
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(text = "Akses Fitur", style = MaterialTheme.typography.labelMedium)
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         UserFeature.values().forEach { feature ->
                             Row(
                                 modifier = Modifier
@@ -378,10 +466,7 @@ private fun AddUserDialog(
                                     onCheckedChange = { onToggleFeature(feature) }
                                 )
                                 Column {
-                                    Text(
-                                        text = feature.label,
-                                        style = MaterialTheme.typography.bodyMedium
-                                    )
+                                    Text(text = feature.label, style = MaterialTheme.typography.bodyMedium)
                                     Text(
                                         text = feature.description,
                                         style = MaterialTheme.typography.bodySmall,
@@ -450,6 +535,7 @@ private fun EditUserDialog(
     onRoleChange: (UserRole) -> Unit,
     onToggleFeature: (UserFeature) -> Unit,
     onDismiss: () -> Unit,
+    onDelete: () -> Unit,
     onSave: () -> Unit
 ) {
     val isNameValid = name.trim().isNotBlank()
@@ -461,7 +547,12 @@ private fun EditUserDialog(
         onDismissRequest = { if (!isSaving) onDismiss() },
         title = { Text("Edit User") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(
+                modifier = Modifier
+                    .heightIn(max = 480.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
                 OutlinedTextField(
                     value = name,
                     onValueChange = onNameChange,
@@ -480,15 +571,10 @@ private fun EditUserDialog(
                         keyboardType = KeyboardType.NumberPassword
                     ),
                     visualTransformation = PasswordVisualTransformation(),
-                    supportingText = {
-                        Text("Kosongkan jika tidak ingin mengubah PIN")
-                    }
+                    supportingText = { Text("Kosongkan jika tidak ingin mengubah PIN") }
                 )
 
-                Text(
-                    text = "Role",
-                    style = MaterialTheme.typography.labelMedium
-                )
+                Text(text = "Role", style = MaterialTheme.typography.labelMedium)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChip(
                         selected = role == UserRole.OWNER,
@@ -503,11 +589,8 @@ private fun EditUserDialog(
                 }
 
                 if (role == UserRole.CASHIER) {
-                    Text(
-                        text = "Akses Fitur",
-                        style = MaterialTheme.typography.labelMedium
-                    )
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(text = "Akses Fitur", style = MaterialTheme.typography.labelMedium)
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         UserFeature.values().forEach { feature ->
                             Row(
                                 modifier = Modifier
@@ -520,10 +603,7 @@ private fun EditUserDialog(
                                     onCheckedChange = { onToggleFeature(feature) }
                                 )
                                 Column {
-                                    Text(
-                                        text = feature.label,
-                                        style = MaterialTheme.typography.bodyMedium
-                                    )
+                                    Text(text = feature.label, style = MaterialTheme.typography.bodyMedium)
                                     Text(
                                         text = feature.description,
                                         style = MaterialTheme.typography.bodySmall,
@@ -572,8 +652,13 @@ private fun EditUserDialog(
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss, enabled = !isSaving) {
-                Text("Batal")
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                TextButton(onClick = onDelete, enabled = !isSaving) {
+                    Text("Hapus", color = MaterialTheme.colorScheme.error)
+                }
+                TextButton(onClick = onDismiss, enabled = !isSaving) {
+                    Text("Batal")
+                }
             }
         }
     )

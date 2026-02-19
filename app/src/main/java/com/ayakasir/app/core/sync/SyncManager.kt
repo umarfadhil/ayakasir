@@ -1,8 +1,10 @@
 package com.ayakasir.app.core.sync
 
 import android.util.Log
+import com.ayakasir.app.core.data.local.datastore.QrisSettingsDataStore
 import com.ayakasir.app.core.data.local.dao.CashWithdrawalDao
 import com.ayakasir.app.core.data.local.dao.CategoryDao
+import com.ayakasir.app.core.data.local.dao.GeneralLedgerDao
 import com.ayakasir.app.core.data.local.dao.GoodsReceivingDao
 import com.ayakasir.app.core.data.local.dao.InventoryDao
 import com.ayakasir.app.core.data.local.dao.ProductComponentDao
@@ -15,8 +17,12 @@ import com.ayakasir.app.core.data.local.dao.VariantDao
 import com.ayakasir.app.core.data.local.dao.VendorDao
 import com.ayakasir.app.core.data.local.entity.GoodsReceivingEntity
 import com.ayakasir.app.core.data.local.entity.GoodsReceivingItemEntity
+import com.ayakasir.app.core.data.local.entity.ProductComponentEntity
+import com.ayakasir.app.core.data.local.entity.VariantEntity
+import com.ayakasir.app.core.data.remote.dto.RestaurantDto
 import com.ayakasir.app.core.data.remote.dto.CashWithdrawalDto
 import com.ayakasir.app.core.data.remote.dto.CategoryDto
+import com.ayakasir.app.core.data.remote.dto.GeneralLedgerDto
 import com.ayakasir.app.core.data.remote.dto.GoodsReceivingDto
 import com.ayakasir.app.core.data.remote.dto.GoodsReceivingItemDto
 import com.ayakasir.app.core.data.remote.dto.InventoryDto
@@ -58,8 +64,10 @@ class SyncManager @Inject constructor(
     private val transactionDao: TransactionDao,
     private val productComponentDao: ProductComponentDao,
     private val cashWithdrawalDao: CashWithdrawalDao,
+    private val generalLedgerDao: GeneralLedgerDao,
     private val restaurantDao: RestaurantDao,
-    private val sessionManager: SessionManager
+    private val sessionManager: SessionManager,
+    private val qrisSettingsDataStore: QrisSettingsDataStore
 ) {
     companion object {
         private const val TAG = "SyncManager"
@@ -127,6 +135,17 @@ class SyncManager @Inject constructor(
                 awaitAll(
                     async {
                         runCatching {
+                            val dto = supabaseClient.from("restaurants")
+                                .select { filter { eq("id", restaurantId) } }
+                                .decodeSingle<RestaurantDto>()
+                            restaurantDao.insert(dto.toEntity())
+                            val url = dto.qrisImageUrl.orEmpty()
+                            val merchant = dto.qrisMerchantName.orEmpty()
+                            qrisSettingsDataStore.saveSettings(url, merchant)
+                        }.onFailure { Log.e(TAG, "Pull restaurant failed: ${it.message}") }
+                    },
+                    async {
+                        runCatching {
                             supabaseClient.from("categories")
                                 .select { filter { eq("restaurant_id", restaurantId) } }
                                 .decodeList<CategoryDto>()
@@ -156,6 +175,14 @@ class SyncManager @Inject constructor(
                                 .decodeList<CashWithdrawalDto>()
                                 .forEach { cashWithdrawalDao.insert(it.toEntity()) }
                         }.onFailure { Log.e(TAG, "Pull cash_withdrawals failed: ${it.message}") }
+                    },
+                    async {
+                        runCatching {
+                            supabaseClient.from("general_ledger")
+                                .select { filter { eq("restaurant_id", restaurantId) } }
+                                .decodeList<GeneralLedgerDto>()
+                                .forEach { generalLedgerDao.insert(it.toEntity()) }
+                        }.onFailure { Log.e(TAG, "Pull general_ledger failed: ${it.message}") }
                     }
                 )
             }
@@ -281,6 +308,52 @@ class SyncManager @Inject constructor(
         Log.d(TAG, "pushGoodsReceivingWithItems: pushed ${items.size} items for ${entity.id}")
     }
 
+    /**
+     * Delete all variants from Supabase by product_id.
+     * Used during product update to replace old variants with new ones.
+     */
+    suspend fun deleteVariantsByProductId(productId: String) {
+        supabaseClient.from("variants").delete {
+            filter { eq("product_id", productId) }
+        }
+        Log.d(TAG, "deleteVariantsByProductId: deleted variants for product $productId")
+    }
+
+    /**
+     * Delete all product_components from Supabase by parent_product_id.
+     * Ensures cleanup even if Room and Supabase are out of sync.
+     */
+    suspend fun deleteComponentsByProductId(productId: String) {
+        supabaseClient.from("product_components").delete {
+            filter { eq("parent_product_id", productId) }
+        }
+        Log.d(TAG, "deleteComponentsByProductId: deleted components for product $productId")
+    }
+
+    /**
+     * Push a single product component directly from in-memory entity, bypassing Room read.
+     */
+    suspend fun pushComponentDirect(entity: ProductComponentEntity) {
+        val synced = SyncStatus.SYNCED.name
+        val dto = entity.toDto().copy(syncStatus = synced)
+        supabaseClient.from("product_components").upsert(json.encodeToJsonElement(dto))
+        productComponentDao.markSynced(entity.id)
+    }
+
+    /**
+     * Push variant entities directly from in-memory list, bypassing Room read.
+     * Avoids read-after-write timing issues with variantDao.insertAll().
+     */
+    suspend fun pushVariantsDirect(variants: List<VariantEntity>) {
+        val synced = SyncStatus.SYNCED.name
+        variants.forEach { v ->
+            val dto = v.toDto().copy(syncStatus = synced)
+            supabaseClient.from("variants").upsert(json.encodeToJsonElement(dto))
+            variantDao.markSynced(v.id)
+        }
+        Log.d(TAG, "pushVariantsDirect: pushed ${variants.size} variants")
+    }
+
     private suspend fun pushUpsert(tableName: String, recordId: String, operation: String) {
         val synced = SyncStatus.SYNCED.name
         when (tableName) {
@@ -361,6 +434,12 @@ class SyncManager @Inject constructor(
                 val dto = entity.toDto().copy(syncStatus = synced)
                 supabaseClient.from(tableName).upsert(json.encodeToJsonElement(dto))
                 cashWithdrawalDao.markSynced(recordId)
+            }
+            "general_ledger" -> {
+                val entity = generalLedgerDao.getById(recordId) ?: return
+                val dto = entity.toDto().copy(syncStatus = synced)
+                supabaseClient.from(tableName).upsert(json.encodeToJsonElement(dto))
+                generalLedgerDao.markSynced(recordId)
             }
             "restaurants" -> {
                 val entity = restaurantDao.getById(recordId) ?: return

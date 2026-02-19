@@ -7,6 +7,7 @@ import com.ayakasir.app.core.data.local.migration.MIGRATION_4_5
 import com.ayakasir.app.core.data.local.migration.MIGRATION_6_7
 import com.ayakasir.app.core.data.local.dao.CashWithdrawalDao
 import com.ayakasir.app.core.data.local.dao.CategoryDao
+import com.ayakasir.app.core.data.local.dao.GeneralLedgerDao
 import com.ayakasir.app.core.data.local.dao.GoodsReceivingDao
 import com.ayakasir.app.core.data.local.dao.InventoryDao
 import com.ayakasir.app.core.data.local.dao.ProductComponentDao
@@ -36,7 +37,7 @@ object DatabaseModule {
             AyaKasirDatabase::class.java,
             "ayakasir.db"
         )
-            .addMigrations(MIGRATION_4_5, MIGRATION_6_7, AyaKasirDatabase.MIGRATION_7_8, AyaKasirDatabase.MIGRATION_8_9, AyaKasirDatabase.MIGRATION_9_10, AyaKasirDatabase.MIGRATION_10_11, AyaKasirDatabase.MIGRATION_11_12)
+            .addMigrations(MIGRATION_4_5, MIGRATION_6_7, AyaKasirDatabase.MIGRATION_7_8, AyaKasirDatabase.MIGRATION_8_9, AyaKasirDatabase.MIGRATION_9_10, AyaKasirDatabase.MIGRATION_10_11, AyaKasirDatabase.MIGRATION_11_12, AyaKasirDatabase.MIGRATION_12_13, AyaKasirDatabase.MIGRATION_13_14, AyaKasirDatabase.MIGRATION_14_15)
             .fallbackToDestructiveMigration()
             .build()
     }
@@ -53,4 +54,5 @@ object DatabaseModule {
     @Provides fun provideTransactionDao(db: AyaKasirDatabase): TransactionDao = db.transactionDao()
     @Provides fun provideSyncQueueDao(db: AyaKasirDatabase): SyncQueueDao = db.syncQueueDao()
     @Provides fun provideCashWithdrawalDao(db: AyaKasirDatabase): CashWithdrawalDao = db.cashWithdrawalDao()
+    @Provides fun provideGeneralLedgerDao(db: AyaKasirDatabase): GeneralLedgerDao = db.generalLedgerDao()
 }

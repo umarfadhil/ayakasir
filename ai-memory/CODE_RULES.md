@@ -171,12 +171,12 @@ interface ExampleDao {
 - Always call `syncScheduler.requestImmediateSync()` after enqueue
 
 ## Pull Sync Rules
-- `SyncManager.pullAllFromSupabase(restaurantId)` pulls all 12 tenant-related tables from Supabase and upserts to Room (REPLACE strategy = server wins).
+- `SyncManager.pullAllFromSupabase(restaurantId)` pulls all 13 tenant-related tables from Supabase and upserts to Room (REPLACE strategy = server wins).
 - Called in two places:
   1. **`AuthViewModel.loginWithEmail()`** — after `loginFull()` succeeds, before navigating to app. Ensures cross-device sync on login.
   2. **`SyncManager.syncAll()`** — Phase 2 after push queue is processed. Runs during every WorkManager periodic sync (15 min).
 - Pull is 3-phase to respect Room FK constraints:
-  - Phase 1 (parallel): categories, vendors, users, cash_withdrawals (leaf/independent tables)
+  - Phase 1 (parallel): categories, vendors, users, cash_withdrawals, general_ledger (leaf/independent tables)
   - Phase 2 (parallel, after phase 1): products, goods_receiving, transactions, inventory
   - Phase 3 (parallel, after phase 2): variants, product_components, goods_receiving_items, transaction_items
 - Per-record inserts are sequential within each table.
@@ -190,11 +190,11 @@ interface ExampleDao {
 ## Multi-Tenancy Rule
 - All operations must use restaurant context from SessionManager.
 - Every tenant-scoped entity MUST include `@ColumnInfo(name = "restaurant_id") val restaurantId: String = ""`.
-- Tenant-scoped tables: categories, products, variants, inventory, product_components, vendors, goods_receiving, goods_receiving_items, transactions, transaction_items, cash_withdrawals.
+- Tenant-scoped tables (12): categories, products, variants, inventory, product_components, vendors, goods_receiving, goods_receiving_items, transactions, transaction_items, cash_withdrawals, general_ledger.
 - Every repository that reads lists or creates entities MUST inject `SessionManager` and use `private val restaurantId: String get() = sessionManager.currentRestaurantId ?: ""`.
 - DAO "list all" queries MUST filter by `WHERE restaurant_id = :restaurantId`.
 - Child tables (variants, product_components, goods_receiving_items, transaction_items, inventory) also store `restaurant_id` (denormalized). Their DAO queries keyed by parentId do NOT need extra restaurant filter — but list-all queries do.
-- Supabase schema: all 11 tables have `restaurant_id UUID REFERENCES restaurants(id)` + index `idx_<table>_restaurant`.
+- Supabase schema: all 12 tables have `restaurant_id UUID REFERENCES restaurants(id)` + index `idx_<table>_restaurant`.
 
 ## Auth Rule
 - Email/password login = required on first login and after explicit logout from Pengaturan. Password hash stored in `users` table (`password_hash`, `password_salt`), validated locally via `PinHasher.verify()`. No Supabase Auth dependency.
@@ -217,6 +217,15 @@ interface ExampleDao {
 - Currency: `CurrencyFormatter.format(25000L)` → "Rp25.000"
 - Date: `DateTimeUtil.todayRange()` → (start: Long, end: Long)
 - PIN: `PinHasher.hash(pin, salt)`, `PinHasher.verify(pin, salt, hash)`
+- Unit: `UnitConverter.normalizeToBase(1, "kg")` → (1000, "g"), `UnitConverter.convert(200, "g", "g")` → 200, `UnitConverter.formatForDisplay(1500, "g")` → "1.5 kg"
+
+## Unit Conversion Rules
+- Inventory stores qty in **base units**: g (mass), mL (volume), pcs (count).
+- `InventoryEntity` has `unit: String = "pcs"` column — stores the base unit.
+- When receiving goods (PurchasingRepository): normalize incoming (qty, unit) to base unit via `UnitConverter.normalizeToBase()` before storing.
+- When decrementing stock via components (TransactionRepository): convert component's (requiredQty, unit) to inventory's unit via `UnitConverter.convert()` before decrementing.
+- Supported conversions: kg → g (×1000), L → mL (×1000). pcs stays pcs.
+- `InventoryItem.displayQty` / `displayMinQty` use `UnitConverter.formatForDisplay()` for human-readable display (e.g. 1500 g → "1.5 kg").
 
 ## Sync Side-Effects Rule
 - When a write produces side-effects (e.g. goods_receiving → inventory update), push those side-effects on BOTH success and failure paths.
@@ -229,7 +238,7 @@ interface ExampleDao {
 - Reserve `@Relation` for UI-facing read flows (Flow-based queries) where timing is not critical.
 
 ## Realtime Sync Rules
-- `RealtimeManager` (@Singleton) subscribes to Supabase Postgres Changes for all 11 tenant tables via a single channel filtered by `restaurant_id`.
+- `RealtimeManager` (@Singleton) subscribes to Supabase Postgres Changes for all 12 tenant tables via a single channel filtered by `restaurant_id`.
 - Lifecycle: `connect(restaurantId)` called from `SessionManager.loginFull()` and `loginPin()`; `disconnect()` called from `SessionManager.logout()`.
 - On INSERT/UPDATE: `action.decodeRecord<Dto>().toEntity()` → `dao.insert()` (REPLACE).
 - On DELETE: `action.decodeOldRecord<Dto>()` → `dao.deleteById(id)`.
@@ -263,8 +272,94 @@ PullToRefreshBox(
 ) { /* existing content */ }
 ```
 
+## Cascade Delete Sync Rule
+When a parent operation cascades to child entities (e.g., delete product → variants/components deleted):
+1. Collect child IDs BEFORE local cascade delete (via `dao.getByProductIdDirect()`)
+2. Delete locally (parent cascade)
+3. Sync parent first
+4. Sync each child deletion independently (own try-catch + SyncQueue fallback)
+
+Same applies to replace operations (e.g., update product replaces variants):
+1. Collect old child IDs before delete
+2. Replace locally
+3. Sync parent
+4. Push DELETE for old children, INSERT for new children
+
+## Email Handling Rule
+- Always normalize email: `.trim().lowercase()` before storing or querying.
+- Supabase queries: use `ilike("email", normalizedEmail)` (NOT `eq`).
+- Room queries: use `WHERE LOWER(email) = LOWER(:email)`.
+- Never use `catch (_: Exception)` without logging in Supabase network calls — at minimum `Log.w(TAG, "...: ${e.message}")`.
+
+## Supabase Credential Rule
+- Credentials (`SUPABASE_URL`, `SUPABASE_ANON_KEY`) are stored in `local.properties` (gitignored).
+- `app/build.gradle.kts` reads them via `localProperties.getProperty("SUPABASE_URL", "")`.
+- NEVER hardcode credentials in committed files. The `build.gradle.kts` fallback is empty string `""`.
+- To set up a new dev environment: add `SUPABASE_URL=https://...` and `SUPABASE_ANON_KEY=eyJ...` to `local.properties`.
+
+## General Ledger Rule
+- Cash balance is derived from `SUM(amount)` of `general_ledger` table — no separate balance store.
+- `LedgerType` enum: `INITIAL_BALANCE`, `SALE`, `WITHDRAWAL`, `ADJUSTMENT`.
+- Signed amounts: positive = inflow (INITIAL_BALANCE, SALE, ADJUSTMENT credit), negative = outflow (WITHDRAWAL).
+- Every cash event MUST create a ledger entry via `GeneralLedgerRepository.recordEntry()`:
+  - **CASH sale** (TransactionRepository): `LedgerType.SALE`, amount = transaction total, referenceId = transaction ID
+  - **Withdrawal** (CashWithdrawalRepository): `LedgerType.WITHDRAWAL`, amount = -withdrawalAmount, referenceId = withdrawal ID
+  - **Initial balance** (InitialBalanceViewModel): `LedgerType.INITIAL_BALANCE`, amount = balance amount
+  - **Adjustment** (future): `LedgerType.ADJUSTMENT`, amount = +/- delta
+- `CashBalanceRepository` reads from `GeneralLedgerRepository` flows (no DataStore, no TransactionRepository, no CashWithdrawalRepository).
+
+## Feature-Gated Screen Content Rule
+- For screens that vary content by user role/features (e.g., SettingsScreen), create a minimal ViewModel that reads `sessionManager.currentUser` and exposes:
+  - `showFullSettings: StateFlow<Boolean>` — true if OWNER or has SETTINGS feature access. Controls whether settings cards are shown at all (vs logout-only).
+  - `isOwner: StateFlow<Boolean>` — true if OWNER role. Controls owner-only cards within settings.
+- Screen collects both values via `collectAsStateWithLifecycle()`:
+  - `if (showFullSettings)` → show settings cards (Printer + owner-only cards)
+  - `if (isOwner)` → show owner-only cards: Saldo Awal Kas, Manajemen User, Manajemen Kategori, Manajemen Vendor, Manajemen Barang, Pengaturan QRIS
+  - Cashier with SETTINGS access sees: Pengaturan Printer + Keluar only.
+- The logout button MUST always be visible regardless of feature access (every role needs to log out).
+- For screens with an existing ViewModel that already injects `SessionManager`, expose `val isOwner: Boolean get() = sessionManager.isOwner` (no StateFlow needed) and use `if (isOwner)` in Composable for owner-only UI elements.
+- **Pembelian screen:** Penerimaan Barang edit/delete buttons are owner-only. Cashiers can add new records (FAB visible) but cannot edit or delete existing ones.
+
+## AlertDialog Delete Confirmation Pattern
+```kotlin
+// In Screen: add separate state for delete confirmation
+var showDeleteConfirm by remember { mutableStateOf(false) }
+
+// In EditDialog: "Hapus" button in dismissButton slot
+dismissButton = {
+    Row {
+        TextButton(onClick = onDelete, enabled = !isSaving) {
+            Text("Hapus", color = MaterialTheme.colorScheme.error)
+        }
+        TextButton(onClick = onDismiss) { Text("Batal") }
+    }
+}
+
+// In Screen: show confirmation dialog when onDelete is called
+if (showDeleteConfirm) {
+    AlertDialog(
+        title = { Text("Hapus Item") },
+        text = { Text("Yakin hapus? Tidak bisa dibatalkan.") },
+        confirmButton = { TextButton(onClick = { viewModel.delete(id) }) { Text("Hapus") } },
+        dismissButton = { TextButton(onClick = { showDeleteConfirm = false }) { Text("Batal") } }
+    )
+}
+```
+
+## Bounded-Height Scrollable List in AlertDialog
+- DO NOT use `Column + verticalScroll` inside `AlertDialog.text` for long lists — causes nested scroll conflicts.
+- Use `Box(Modifier.heightIn(max = Xdp)) { LazyColumn(...) }` for independently scrollable bounded list.
+```kotlin
+Box(modifier = Modifier.heightIn(max = 180.dp)) {
+    LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        items(list) { item -> /* row */ }
+    }
+}
+```
+
 ## DO NOT
 - Hard-code IDs (use UuidGenerator)
+- Hard-code Supabase credentials in build.gradle.kts (use local.properties)
 - Forget `syncStatus`, `updatedAt`, and `restaurantId` on tenant-scoped entities
 - Skip SyncQueue after writes
 - Use decimal types for currency (Long only)
@@ -272,5 +367,11 @@ PullToRefreshBox(
 - Use Room `@Relation` in SyncManager push operations (use direct queries instead)
 - Use `json.encodeToJsonElement(list)` for bulk Supabase upsert (push items one by one instead)
 - Pull child tables in parallel with parent tables (respect Room FK constraints with phased pull)
+- Cascade-delete child entities without syncing each deletion to Supabase
+- Use case-sensitive `eq` for email queries (use `ilike` for Supabase, `LOWER()` for Room)
+- Silently swallow exceptions without logging in network calls
+- Forget to create a ledger entry when recording cash events (SALE, WITHDRAWAL, INITIAL_BALANCE)
+- Forget to set `restaurantId = sessionManager.currentRestaurantId` when creating new users via owner
+- Use `Column + verticalScroll` inside AlertDialog for long lists (use `Box(heightIn) + LazyColumn` instead)
 
 

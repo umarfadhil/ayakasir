@@ -5,6 +5,7 @@ import com.ayakasir.app.core.data.local.dao.SyncQueueDao
 import com.ayakasir.app.core.data.local.entity.CashWithdrawalEntity
 import com.ayakasir.app.core.data.local.entity.SyncQueueEntity
 import com.ayakasir.app.core.domain.model.CashWithdrawal
+import com.ayakasir.app.core.domain.model.LedgerType
 import com.ayakasir.app.core.domain.model.SyncStatus
 import com.ayakasir.app.core.session.SessionManager
 import com.ayakasir.app.core.sync.SyncManager
@@ -21,7 +22,8 @@ class CashWithdrawalRepository @Inject constructor(
     private val syncQueueDao: SyncQueueDao,
     private val syncScheduler: SyncScheduler,
     private val syncManager: SyncManager,
-    private val sessionManager: SessionManager
+    private val sessionManager: SessionManager,
+    private val generalLedgerRepository: GeneralLedgerRepository
 ) {
     private val restaurantId: String get() = sessionManager.currentRestaurantId ?: ""
 
@@ -68,6 +70,15 @@ class CashWithdrawalRepository @Inject constructor(
             )
             syncScheduler.requestImmediateSync()
         }
+
+        // Record negative ledger entry for withdrawal
+        generalLedgerRepository.recordEntry(
+            type = LedgerType.WITHDRAWAL,
+            amount = -amount,
+            description = reason,
+            userId = userId,
+            referenceId = id
+        )
 
         return id
     }

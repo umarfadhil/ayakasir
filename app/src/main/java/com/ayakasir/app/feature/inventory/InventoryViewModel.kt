@@ -58,6 +58,10 @@ class InventoryViewModel @Inject constructor(
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    val totalInventoryValue: StateFlow<Long> = inventory
+        .map { items -> items.sumOf { it.itemValue } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0L)
+
     private val _uiState = MutableStateFlow(InventoryUiState())
     val uiState: StateFlow<InventoryUiState> = _uiState.asStateFlow()
 

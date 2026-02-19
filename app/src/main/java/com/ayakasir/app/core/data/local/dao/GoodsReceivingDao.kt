@@ -66,4 +66,7 @@ interface GoodsReceivingDao {
 
     @Query("DELETE FROM goods_receiving_items WHERE receiving_id = :receivingId")
     suspend fun deleteItems(receivingId: String)
+
+    @Query("SELECT * FROM goods_receiving_items WHERE restaurant_id = :restaurantId")
+    fun getAllItems(restaurantId: String): Flow<List<GoodsReceivingItemEntity>>
 }

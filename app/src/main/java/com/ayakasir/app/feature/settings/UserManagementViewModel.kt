@@ -6,6 +6,8 @@ import com.ayakasir.app.core.data.repository.UserRepository
 import com.ayakasir.app.core.domain.model.User
 import com.ayakasir.app.core.domain.model.UserFeature
 import com.ayakasir.app.core.domain.model.UserRole
+import com.ayakasir.app.core.session.SessionManager
+import com.ayakasir.app.core.sync.SyncManager
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -18,7 +20,9 @@ import javax.inject.Inject
 
 @HiltViewModel
 class UserManagementViewModel @Inject constructor(
-    private val userRepository: UserRepository
+    private val userRepository: UserRepository,
+    private val syncManager: SyncManager,
+    private val sessionManager: SessionManager
 ) : ViewModel() {
 
     data class UiState(
@@ -34,13 +38,26 @@ class UserManagementViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(UiState())
     val uiState: StateFlow<UiState> = _uiState.asStateFlow()
 
-    fun createUser(name: String, pin: String, role: UserRole, featureAccess: Set<UserFeature>) {
+    private val _isRefreshing = MutableStateFlow(false)
+    val isRefreshing: StateFlow<Boolean> = _isRefreshing.asStateFlow()
+
+    fun createUser(
+        name: String,
+        email: String,
+        phone: String,
+        password: String,
+        pin: String,
+        role: UserRole,
+        featureAccess: Set<UserFeature>
+    ) {
         viewModelScope.launch {
             _uiState.update { it.copy(isSaving = true, error = null) }
             try {
-                val normalizedName = name.trim()
                 userRepository.createUser(
-                    name = normalizedName,
+                    name = name.trim(),
+                    email = email,
+                    phone = phone,
+                    password = password,
                     pin = pin,
                     role = role,
                     featureAccess = if (role == UserRole.CASHIER) featureAccess else emptySet()
@@ -82,6 +99,36 @@ class UserManagementViewModel @Inject constructor(
                 }
             } catch (e: Exception) {
                 _uiState.update { it.copy(isSaving = false, error = "Gagal memperbarui user") }
+            }
+        }
+    }
+
+    fun deleteUser(userId: String) {
+        if (userId == sessionManager.currentUser.value?.id) {
+            _uiState.update { it.copy(error = "Tidak dapat menghapus akun sendiri") }
+            return
+        }
+        viewModelScope.launch {
+            _uiState.update { it.copy(isSaving = true, error = null) }
+            try {
+                userRepository.deleteUser(userId)
+                _uiState.update {
+                    it.copy(isSaving = false, saveSuccessCounter = it.saveSuccessCounter + 1)
+                }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(isSaving = false, error = "Gagal menghapus user") }
+            }
+        }
+    }
+
+    fun refresh() {
+        val restaurantId = sessionManager.currentRestaurantId ?: return
+        viewModelScope.launch {
+            _isRefreshing.value = true
+            try {
+                syncManager.pullAllFromSupabase(restaurantId)
+            } finally {
+                _isRefreshing.value = false
             }
         }
     }

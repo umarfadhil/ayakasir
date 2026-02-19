@@ -10,6 +10,7 @@ import io.github.jan.supabase.auth.Auth
 import io.github.jan.supabase.createSupabaseClient
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.realtime.Realtime
+import io.github.jan.supabase.storage.Storage
 import kotlinx.serialization.json.Json
 import javax.inject.Singleton
 
@@ -27,6 +28,7 @@ object NetworkModule {
             install(Postgrest)
             install(Auth)
             install(Realtime)
+            install(Storage)
         }
     }
 

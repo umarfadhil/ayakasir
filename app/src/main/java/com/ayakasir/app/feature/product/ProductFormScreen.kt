@@ -7,9 +7,9 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.ui.Alignment
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -30,7 +30,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -85,7 +84,7 @@ fun ProductFormScreen(
         if (form.isSaved) onSaved()
     }
 
-    Column(modifier = Modifier.fillMaxSize()) {
+    Column(modifier = Modifier.fillMaxSize().imePadding()) {
         TopAppBar(
             title = { Text(if (productId != null) "Edit Produk" else "Tambah Produk") },
             navigationIcon = {
@@ -126,36 +125,6 @@ fun ProductFormScreen(
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true
             )
-
-            // Product type selection
-            Text("Jenis Produk", style = MaterialTheme.typography.titleSmall)
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                Row(
-                    modifier = Modifier.weight(1f),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    RadioButton(
-                        selected = form.productType == ProductType.MENU_ITEM,
-                        onClick = { viewModel.onProductTypeChange(ProductType.MENU_ITEM) }
-                    )
-                    Spacer(Modifier.width(4.dp))
-                    Text("Menu Item")
-                }
-                Row(
-                    modifier = Modifier.weight(1f),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    RadioButton(
-                        selected = form.productType == ProductType.RAW_MATERIAL,
-                        onClick = { viewModel.onProductTypeChange(ProductType.RAW_MATERIAL) }
-                    )
-                    Spacer(Modifier.width(4.dp))
-                    Text("Bahan Baku")
-                }
-            }
 
             // Category dropdown
             var expanded by remember { mutableStateOf(false) }

@@ -57,6 +57,7 @@ See `ai-memory/FILE_MAP.md` for a detailed file-by-file map. Key entry points:
 
 ---
 
+
 ## Build & Tech Stack
 - **Gradle:** Kotlin DSL, Version Catalog
 - **Java:** 17
@@ -72,11 +73,13 @@ See `ai-memory/FILE_MAP.md` for a detailed file-by-file map. Key entry points:
 
 ---
 
-## Learnings & Conventions
-- **Session:** SessionManager holds user + restaurant context
-- **SyncStatus:** Enum (PENDING, SYNCING, SYNCED, FAILED, CONFLICT)
-- **Migration:** Room migration uses rebuild pattern for schema changes
-- **Auth:** Password/PIN validated locally, not via Supabase Auth
+## Supabase Schema & Migration
+The Supabase schema is versioned and aligned with the app's Room database. See `supabase/schema.sql` for the full DDL. 
+
+- **Schema version:** See top of `supabase/schema.sql` (e.g. `Version: Aligned with App DB v15`)
+- **Migrations:** Use the provided SQL for upgrades. Major changes are documented in `ai-memory/SESSION_LEARNINGS.md`.
+- **Tables:** Restaurants, Users, Categories, Products, Variants, Product Components, Vendors, Inventory, Goods Receiving (+ Items), Transactions (+ Items), Cash Withdrawals, General Ledger
+- **RLS:** Row Level Security enabled for all tables. Default policies are permissive for development; production must implement proper auth.
 
 ---
 

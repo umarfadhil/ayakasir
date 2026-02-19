@@ -3,6 +3,7 @@ package com.ayakasir.app.core.sync
 import android.util.Log
 import com.ayakasir.app.core.data.local.dao.CashWithdrawalDao
 import com.ayakasir.app.core.data.local.dao.CategoryDao
+import com.ayakasir.app.core.data.local.dao.GeneralLedgerDao
 import com.ayakasir.app.core.data.local.dao.GoodsReceivingDao
 import com.ayakasir.app.core.data.local.dao.InventoryDao
 import com.ayakasir.app.core.data.local.dao.ProductComponentDao
@@ -13,6 +14,7 @@ import com.ayakasir.app.core.data.local.dao.VariantDao
 import com.ayakasir.app.core.data.local.dao.VendorDao
 import com.ayakasir.app.core.data.remote.dto.CashWithdrawalDto
 import com.ayakasir.app.core.data.remote.dto.CategoryDto
+import com.ayakasir.app.core.data.remote.dto.GeneralLedgerDto
 import com.ayakasir.app.core.data.remote.dto.GoodsReceivingDto
 import com.ayakasir.app.core.data.remote.dto.GoodsReceivingItemDto
 import com.ayakasir.app.core.data.remote.dto.InventoryDto
@@ -55,6 +57,7 @@ class RealtimeManager @Inject constructor(
     private val transactionDao: TransactionDao,
     private val productComponentDao: ProductComponentDao,
     private val cashWithdrawalDao: CashWithdrawalDao,
+    private val generalLedgerDao: GeneralLedgerDao,
     private val userDao: UserDao
 ) {
     companion object {
@@ -88,6 +91,7 @@ class RealtimeManager @Inject constructor(
                 setupTransactionItemsListener(ch, restaurantId, newScope)
                 setupProductComponentsListener(ch, restaurantId, newScope)
                 setupCashWithdrawalsListener(ch, restaurantId, newScope)
+                setupGeneralLedgerListener(ch, restaurantId, newScope)
 
                 ch.subscribe()
                 Log.d(TAG, "Realtime channel subscribed")
@@ -316,6 +320,25 @@ class RealtimeManager @Inject constructor(
                         else -> {}
                     }
                 }.onFailure { Log.e(TAG, "Realtime cash_withdrawals error: ${it.message}") }
+            }
+        }
+    }
+
+    private fun setupGeneralLedgerListener(ch: RealtimeChannel, restaurantId: String, scope: CoroutineScope) {
+        val flow = ch.postgresChangeFlow<PostgresAction>(schema = "public") {
+            table = "general_ledger"
+            filter(column = "restaurant_id", operator = FilterOperator.EQ, value = restaurantId)
+        }
+        scope.launch {
+            flow.collect { action ->
+                runCatching {
+                    when (action) {
+                        is PostgresAction.Insert -> generalLedgerDao.insert(action.decodeRecord<GeneralLedgerDto>().toEntity())
+                        is PostgresAction.Update -> generalLedgerDao.insert(action.decodeRecord<GeneralLedgerDto>().toEntity())
+                        is PostgresAction.Delete -> action.decodeOldRecord<GeneralLedgerDto>().let { generalLedgerDao.deleteById(it.id) }
+                        else -> {}
+                    }
+                }.onFailure { Log.e(TAG, "Realtime general_ledger error: ${it.message}") }
             }
         }
     }

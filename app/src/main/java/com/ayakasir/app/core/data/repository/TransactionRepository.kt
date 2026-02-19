@@ -9,6 +9,7 @@ import com.ayakasir.app.core.data.local.entity.TransactionEntity
 import com.ayakasir.app.core.data.local.entity.TransactionItemEntity
 import com.ayakasir.app.core.data.local.relation.TransactionWithItems
 import com.ayakasir.app.core.domain.model.CartItem
+import com.ayakasir.app.core.domain.model.LedgerType
 import com.ayakasir.app.core.domain.model.PaymentMethod
 import com.ayakasir.app.core.domain.model.SyncStatus
 import com.ayakasir.app.core.domain.model.Transaction
@@ -17,6 +18,7 @@ import com.ayakasir.app.core.domain.model.TransactionStatus
 import com.ayakasir.app.core.session.SessionManager
 import com.ayakasir.app.core.sync.SyncManager
 import com.ayakasir.app.core.sync.SyncScheduler
+import com.ayakasir.app.core.util.UnitConverter
 import com.ayakasir.app.core.util.UuidGenerator
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -31,7 +33,8 @@ class TransactionRepository @Inject constructor(
     private val syncQueueDao: SyncQueueDao,
     private val syncScheduler: SyncScheduler,
     private val syncManager: SyncManager,
-    private val sessionManager: SessionManager
+    private val sessionManager: SessionManager,
+    private val generalLedgerRepository: GeneralLedgerRepository
 ) {
     private val restaurantId: String get() = sessionManager.currentRestaurantId ?: ""
 
@@ -105,13 +108,21 @@ class TransactionRepository @Inject constructor(
                     )
                 )
             } else {
-                // Recipe menu: deduct component inventory
+                // Recipe menu: deduct component inventory with unit conversion
                 components.forEach { comp ->
                     val totalQtyNeeded = comp.requiredQty * item.qty
+                    // Convert component unit to inventory's base unit before decrementing
+                    val inventory = inventoryDao.get(comp.componentProductId, comp.componentVariantId)
+                    val decrQty = if (inventory != null && UnitConverter.areCompatible(comp.unit, inventory.unit)) {
+                        UnitConverter.convert(totalQtyNeeded, comp.unit, inventory.unit)
+                    } else {
+                        // Normalize to base unit as fallback
+                        UnitConverter.normalizeToBase(totalQtyNeeded, comp.unit).first
+                    }
                     inventoryDao.decrementStock(
                         comp.componentProductId,
                         comp.componentVariantId,
-                        totalQtyNeeded,
+                        decrQty,
                         now
                     )
                     inventorySyncEntries.add(
@@ -133,10 +144,32 @@ class TransactionRepository @Inject constructor(
             syncQueueDao.enqueue(
                 SyncQueueEntity(tableName = "transactions", recordId = txnId, operation = "INSERT", payload = "{\"id\":\"$txnId\"}")
             )
-            // Also enqueue inventory sync entries on failure
+            // Enqueue inventory sync entries on transaction push failure
             inventorySyncEntries.forEach { syncQueueDao.enqueue(it) }
             syncScheduler.requestImmediateSync()
         }
+
+        // Push inventory changes independently (not gated by transaction push success/failure)
+        inventorySyncEntries.forEach { entry ->
+            try {
+                syncManager.pushToSupabase(entry.tableName, entry.operation, entry.recordId)
+            } catch (e: Exception) {
+                syncQueueDao.enqueue(entry)
+                syncScheduler.requestImmediateSync()
+            }
+        }
+
+        // Record ledger entry for CASH sales
+        if (paymentMethod == PaymentMethod.CASH) {
+            generalLedgerRepository.recordEntry(
+                type = LedgerType.SALE,
+                amount = total,
+                description = "Penjualan tunai",
+                userId = userId,
+                referenceId = txnId
+            )
+        }
+
         return txnId
     }
 

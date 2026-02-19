@@ -1,8 +1,7 @@
 package com.ayakasir.app.core.data.repository
 
-import com.ayakasir.app.core.data.local.datastore.CashBalanceDataStore
 import com.ayakasir.app.core.domain.model.CashBalance
-import com.ayakasir.app.core.domain.model.PaymentMethod
+import com.ayakasir.app.core.domain.model.LedgerType
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
@@ -11,31 +10,26 @@ import javax.inject.Singleton
 
 @Singleton
 class CashBalanceRepository @Inject constructor(
-    private val transactionRepository: TransactionRepository,
-    private val cashWithdrawalRepository: CashWithdrawalRepository,
-    private val cashBalanceDataStore: CashBalanceDataStore
+    private val generalLedgerRepository: GeneralLedgerRepository
 ) {
     /**
-     * Get current cumulative cash balance (reactive, auto-updating)
-     * Calculates: Initial Balance + All Cash Sales - All Withdrawals
+     * Get current cumulative cash balance (reactive, auto-updating).
+     * Balance is computed entirely from the general_ledger table.
      */
     fun getCurrentBalance(): Flow<CashBalance> {
-        // Use timestamp 0 to Long.MAX_VALUE to get ALL transactions/withdrawals (all-time)
-        val allTimeStart = 0L
-        val allTimeEnd = Long.MAX_VALUE
-
         return combine(
-            cashBalanceDataStore.initialBalance,
-            transactionRepository.getTotalByMethod(PaymentMethod.CASH, allTimeStart, allTimeEnd),
-            cashWithdrawalRepository.getTotalByDateRange(allTimeStart, allTimeEnd)
-        ) { initialBalance, cashSales, withdrawals ->
-            val current = initialBalance + cashSales - withdrawals
-
+            generalLedgerRepository.getTotalByType(LedgerType.INITIAL_BALANCE),
+            generalLedgerRepository.getTotalByType(LedgerType.SALE),
+            generalLedgerRepository.getTotalByType(LedgerType.WITHDRAWAL),
+            generalLedgerRepository.getTotalByType(LedgerType.ADJUSTMENT),
+            generalLedgerRepository.getBalance()
+        ) { initialBalance, sales, withdrawals, adjustments, currentBalance ->
             CashBalance(
                 initialBalance = initialBalance,
-                totalCashSales = cashSales,
+                totalCashSales = sales,
                 totalWithdrawals = withdrawals,
-                currentBalance = current
+                totalAdjustments = adjustments,
+                currentBalance = currentBalance
             )
         }
     }

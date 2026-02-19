@@ -1,23 +1,32 @@
 -- AyaKasir Supabase Schema (PostgreSQL)
 -- Run this in your Supabase SQL editor to set up the remote database
--- Version: Aligned with App DB v12
+-- Version: Aligned with App DB v15
 
 -- Enable UUID extension
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
--- Restaurants table (NEW in v9)
+-- Restaurants table (NEW in v9, UPDATED in v15: added qris_image_url, qris_merchant_name)
 CREATE TABLE restaurants (
     id UUID PRIMARY KEY,
     name TEXT NOT NULL,
     owner_email TEXT NOT NULL,
     owner_phone TEXT NOT NULL,
     is_active BOOLEAN DEFAULT true,
+    qris_image_url TEXT,
+    qris_merchant_name TEXT,
     sync_status TEXT NOT NULL DEFAULT 'SYNCED',
     updated_at BIGINT NOT NULL,
     created_at BIGINT NOT NULL
 );
 
--- Users table (UPDATED in v10: added restaurant_id FK)
+-- Storage bucket for QRIS images (run once via Supabase dashboard → Storage → New bucket)
+-- Bucket name: qris-images, Public: true
+-- Policy: allow INSERT for authenticated users, SELECT for public
+-- ALTER TABLE for existing deployments:
+-- ALTER TABLE restaurants ADD COLUMN IF NOT EXISTS qris_image_url TEXT;
+-- ALTER TABLE restaurants ADD COLUMN IF NOT EXISTS qris_merchant_name TEXT;
+
+-- Users table (UPDATED in v10: added restaurant_id FK, v13: added password_hash/salt)
 CREATE TABLE users (
     id UUID PRIMARY KEY,
     name TEXT NOT NULL,
@@ -25,6 +34,8 @@ CREATE TABLE users (
     phone TEXT,
     pin_hash TEXT NOT NULL,
     pin_salt TEXT NOT NULL,
+    password_hash TEXT,
+    password_salt TEXT,
     role TEXT NOT NULL CHECK (role IN ('OWNER', 'CASHIER')),
     restaurant_id UUID REFERENCES restaurants(id),
     feature_access TEXT,
@@ -117,6 +128,7 @@ CREATE TABLE inventory (
     restaurant_id UUID REFERENCES restaurants(id),
     current_qty INTEGER DEFAULT 0,
     min_qty INTEGER DEFAULT 0,
+    unit TEXT NOT NULL DEFAULT 'pcs', -- base unit: g, mL, pcs
     sync_status TEXT NOT NULL DEFAULT 'SYNCED',
     updated_at BIGINT NOT NULL,
     PRIMARY KEY (product_id, variant_id)
@@ -209,6 +221,26 @@ CREATE TABLE transaction_items (
 CREATE INDEX idx_transaction_items_restaurant ON transaction_items(restaurant_id);
 CREATE INDEX idx_transaction_items_transaction ON transaction_items(transaction_id);
 
+-- General ledger table (cashflow tracking)
+CREATE TABLE general_ledger (
+    id UUID PRIMARY KEY,
+    restaurant_id UUID REFERENCES restaurants(id),
+    type TEXT NOT NULL CHECK (type IN ('INITIAL_BALANCE', 'SALE', 'WITHDRAWAL', 'ADJUSTMENT')),
+    amount BIGINT NOT NULL,
+    reference_id TEXT,
+    description TEXT NOT NULL,
+    date BIGINT NOT NULL,
+    user_id TEXT NOT NULL,
+    sync_status TEXT NOT NULL DEFAULT 'SYNCED',
+    updated_at BIGINT NOT NULL
+);
+
+CREATE INDEX idx_general_ledger_restaurant ON general_ledger(restaurant_id);
+CREATE INDEX idx_general_ledger_type ON general_ledger(type);
+CREATE INDEX idx_general_ledger_date ON general_ledger(date);
+CREATE INDEX idx_general_ledger_reference ON general_ledger(reference_id);
+CREATE INDEX idx_general_ledger_sync_status ON general_ledger(sync_status);
+
 -- Row Level Security (RLS) policies
 -- For development: permissive policies. In production, implement proper auth.
 
@@ -225,6 +257,7 @@ ALTER TABLE goods_receiving_items ENABLE ROW LEVEL SECURITY;
 ALTER TABLE transactions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE cash_withdrawals ENABLE ROW LEVEL SECURITY;
 ALTER TABLE transaction_items ENABLE ROW LEVEL SECURITY;
+ALTER TABLE general_ledger ENABLE ROW LEVEL SECURITY;
 
 -- Create permissive policies (allow all operations)
 -- WARNING: This is for development only. In production, implement proper auth.
@@ -242,3 +275,4 @@ CREATE POLICY "Allow all on goods_receiving_items" ON goods_receiving_items FOR 
 CREATE POLICY "Allow all on transactions" ON transactions FOR ALL USING (true);
 CREATE POLICY "Allow all on cash_withdrawals" ON cash_withdrawals FOR ALL USING (true);
 CREATE POLICY "Allow all on transaction_items" ON transaction_items FOR ALL USING (true);
+CREATE POLICY "Allow all on general_ledger" ON general_ledger FOR ALL USING (true);

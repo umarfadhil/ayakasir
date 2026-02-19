@@ -1,5 +1,6 @@
 package com.ayakasir.app.core.data.repository
 
+import android.util.Log
 import com.ayakasir.app.core.data.local.dao.RestaurantDao
 import com.ayakasir.app.core.data.local.dao.SyncQueueDao
 import com.ayakasir.app.core.data.local.entity.RestaurantEntity
@@ -48,6 +49,7 @@ class RestaurantRepository @Inject constructor(
         try {
             syncManager.pushToSupabase("restaurants", "INSERT", entity.id)
         } catch (e: Exception) {
+            Log.w("RestaurantRepository", "Restaurant push failed: ${e.message}")
             syncQueueDao.enqueue(
                 SyncQueueEntity(
                     tableName = "restaurants",

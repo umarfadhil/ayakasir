@@ -530,6 +530,25 @@ API logs showed consistent pattern for every attempt (direct + SyncQueue retries
 - When a screen already has an in-memory filter (`menuItems = products.filter { ... }`), removing a section is a pure UI change — no DAO/Repo changes needed.
 - Keep `getAllActiveProducts()` in repository intact for reuse by other consumers (component picker, future screens).
 
+## 2026-02-18 — Product Components Not Saving (Missing restaurantId)
+
+### Problem
+When creating a menu item with ingredients, the product was saved to `products` table but ingredients were NOT saved to `product_components` in Supabase. They existed locally in Room but never synced.
+
+### Root Cause
+`ProductComponentRepository` did not inject `SessionManager` and never set `restaurantId` on `ProductComponentEntity`. The entity defaulted to `restaurantId = ""`. When `pushToSupabase` tried to upsert with `restaurant_id = ""` for a `UUID` column in Supabase, it threw a Postgres type-cast exception. The error was caught silently, enqueued to SyncQueue, and the queue retry also failed for the same reason.
+
+### Fix
+- Injected `SessionManager` into `ProductComponentRepository`
+- Added `private val restaurantId: String get() = sessionManager.currentRestaurantId ?: ""`
+- Set `restaurantId = restaurantId` when constructing `ProductComponentEntity` in `addComponent()`
+
+### Files changed
+- `ProductComponentRepository.kt`: Added `SessionManager` injection + `restaurantId` property + set on entity creation
+
+### LESSON
+**Every repository that creates tenant-scoped entities MUST inject `SessionManager` and set `restaurantId`.** This was already documented in CODE_RULES.md but `ProductComponentRepository` was missed during the multi-tenancy rollout. When Supabase push silently fails, check if `restaurantId` is empty — a UUID column receiving `""` causes an immediate Postgres type-cast error.
+
 ## 2026-02-18 — Realtime Sync + Pull-to-Refresh
 
 ### Goal
@@ -562,3 +581,513 @@ Make all data screens (POS, Dashboard, Inventory, Products, Categories, Vendors,
 - **RealtimeManager must NOT inject SessionManager** (avoid circular dependency) — takes `restaurantId` as parameter from SessionManager instead.
 - **Pull-to-refresh pattern:** ViewModel exposes `isRefreshing: StateFlow<Boolean>` + `refresh()`. Screen uses `PullToRefreshBox(isRefreshing, onRefresh)` wrapping existing content. Import `ExperimentalMaterial3Api`.
 - **DAOs without delete methods** (TransactionDao, CashWithdrawalDao): Realtime listener only handles INSERT/UPDATE, skips DELETE events.
+
+## 2026-02-18 — Menu Screen Improvements
+
+### 1. Keyboard Not Covering Fields (ProductFormScreen)
+- **Problem:** When selecting a text field in the product form, the soft keyboard covered input fields.
+- **Fix:** Added `imePadding()` modifier to the root `Column` in `ProductFormScreen.kt`.
+- **Files changed:** `feature/product/ProductFormScreen.kt`
+
+### 2. Removed Jenis Produk Radio Buttons
+- **Problem:** "Jenis Produk" radio buttons (Menu Item / Bahan Baku) were unnecessary since the "Tambah Produk" screen defaults to MENU_ITEM.
+- **Fix:** Removed the radio buttons section (lines 130-158) from `ProductFormScreen.kt`. Default `ProductType.MENU_ITEM` in `ProductFormState` remains unchanged.
+- **Files changed:** `feature/product/ProductFormScreen.kt`
+- **Note:** Removed unused imports: `RadioButton`, `Alignment`
+
+### 3. Unit Conversion for Inventory (kg↔g, L↔mL)
+- **Problem:** When purchasing rice in kg but recipe uses grams, stock decrement didn't convert units. 1 kg rice bought → inventory = 1. Recipe needs 200g → subtracted 200 from 1 (wrong).
+- **Architecture Decision:** Normalize inventory to base units at storage time. Base units: g (mass), mL (volume), pcs (count).
+  - Purchasing 1 kg → inventory stores 1000 g
+  - Recipe needs 200 g → decrement 200 from inventory (both in g)
+  - All integer math, no fractional loss.
+- **New Files:**
+  - `core/util/UnitConverter.kt` — normalizeToBase(), convert(), areCompatible(), formatForDisplay()
+- **Schema Changes:**
+  - `InventoryEntity`: Added `unit: String = "pcs"` column
+  - `InventoryDto`: Added `unit: String = "pcs"` field
+  - `DtoEntityMappers.kt`: Added `unit` to both Entity↔DTO mappers
+  - Room migration 12→13: `ALTER TABLE inventory ADD COLUMN unit TEXT NOT NULL DEFAULT 'pcs'`
+  - Supabase migration: Same `ALTER TABLE` applied via MCP
+  - DB version: 12 → 13
+- **Repository Changes:**
+  - `PurchasingRepository`: On goods receiving, normalizes (qty, unit) to base unit via `UnitConverter.normalizeToBase()` before storing in inventory. New inventory records get base unit. Existing inventory converts incoming unit to inventory's stored unit.
+  - `TransactionRepository`: When decrementing component stock, converts component's (requiredQty, unit) to inventory's base unit via `UnitConverter.convert()` before decrement.
+- **Domain/UI Changes:**
+  - `InventoryItem`: Added `unit` field + `displayQty`/`displayMinQty` computed properties using `UnitConverter.formatForDisplay()`
+  - `InventoryScreen`: Shows formatted qty with unit (e.g., "1.5 kg" instead of "1500")
+  - `InventoryRepository`: Passes `unit` from entity to domain model
+- **Files changed:** `InventoryEntity.kt`, `InventoryDto.kt`, `DtoEntityMappers.kt`, `AyaKasirDatabase.kt`, `DatabaseModule.kt`, `PurchasingRepository.kt`, `TransactionRepository.kt`, `InventoryItem.kt`, `InventoryRepository.kt`, `InventoryScreen.kt`, `supabase/schema.sql`
+- **LESSON:** When different parts of the system use different units for the same dimension, normalize to the smallest base unit at storage time to keep all math as integers.
+
+## 2026-02-18 — Inventory Unit Mismatch Fix
+
+### Problem
+Unit shown in Stok (Inventory screen) didn't match unit entered in Pembelian (Goods Receiving). E.g., receiving in "kg" but Stok showed "pcs".
+
+### Root Cause
+In `PurchasingRepository` (createReceiving + updateReceiving), when existing inventory has a `unit` incompatible with the incoming item's unit (e.g., existing="pcs", incoming="kg"):
+- `areCompatible("kg", "pcs")` = false → fell through to `normalizedQty` path
+- `inventoryDao.incrementStock()` only updates `current_qty` (SQL query), NOT the `unit` column
+- Result: `unit` column stays "pcs" but qty is now in grams → display shows wrong unit
+
+### Fix
+Changed the incompatible-unit path from `incrementStock()` to `insert(existing.copy(...))` with REPLACE strategy, so both `currentQty` and `unit` get updated atomically:
+```kotlin
+if (UnitConverter.areCompatible(item.unit, existing.unit)) {
+    inventoryDao.incrementStock(...)
+} else {
+    // Update unit to base unit so unit column matches
+    inventoryDao.insert(existing.copy(
+        currentQty = existing.currentQty + normalizedQty,
+        unit = baseUnit,
+        syncStatus = SyncStatus.PENDING.name,
+        updatedAt = now
+    ))
+}
+```
+
+### Secondary Fix: Adjust Dialog Shows Unit
+Added unit suffix to adjust dialog labels in InventoryScreen:
+- "Stok" → "Stok (${item.unit})" (e.g., "Stok (g)")
+- "Minimum" → "Min (${item.unit})" (e.g., "Min (g)")
+Pre-fill value stays as raw base-unit integer — user now knows what unit they're entering.
+
+### Files changed
+- `PurchasingRepository.kt`: Fixed incompatible-unit branch in `createReceiving()` and `updateReceiving()` (new items section)
+- `InventoryScreen.kt`: Added unit suffix to adjust dialog labels
+
+### LESSON
+`DAO @Query` methods that only update specific columns (e.g., `incrementStock` updates `current_qty`) do NOT update other columns. When multiple columns must change together (qty + unit), use `dao.insert(entity.copy(...))` with `OnConflictStrategy.REPLACE` — this is an atomic full-row replacement.
+
+## 2026-02-18 — Variant & ProductComponent Sync Coverage
+
+### Problem
+5 tables flagged as potentially missing sync: `product_components`, `cash_withdrawals`, `transaction_items`, `transactions`, `variants`. Investigation showed:
+- **transactions** — already fully synced (create + void)
+- **transaction_items** — already synced implicitly via parent transaction INSERT in SyncManager
+- **cash_withdrawals** — already fully synced (create)
+- **variants** — CRITICAL GAP: created/updated/deleted locally but never synced to Supabase
+- **product_components** — MINOR GAP: `deleteByProductId()` cascade was silent (no sync)
+
+### Fixes Applied
+
+#### 1. ProductRepository — Variant Sync
+- **createProduct():** After syncing the product, now iterates variants and pushes each via `syncManager.pushToSupabase("variants", "INSERT", v.id)` with SyncQueue fallback.
+- **updateProduct():** Collects old variant IDs via `variantDao.getByProductIdDirect()` BEFORE local delete. After syncing the product update, pushes DELETE for each old variant and INSERT for each new variant.
+- **deleteProduct():** Collects variant IDs BEFORE local product delete (cascade). After syncing product delete, pushes DELETE for each variant.
+
+#### 2. ProductComponentRepository — Cascade Delete Sync
+- **deleteByProductId():** Now collects component IDs via `getByProductIdDirect()` BEFORE local delete. After deleting locally, pushes DELETE for each component to Supabase with SyncQueue fallback.
+
+### Files changed
+- `ProductRepository.kt`: Added variant sync in create/update/delete
+- `ProductComponentRepository.kt`: Added cascade delete sync in `deleteByProductId()`
+
+### LESSON
+When a parent entity operation cascades to child entities (delete product → delete variants, delete product → delete components), always:
+1. Collect child IDs BEFORE the local cascade delete
+2. Sync parent first
+3. Sync each child deletion independently (own try-catch + SyncQueue fallback)
+
+## 2026-02-18 — Login "Akun tidak ditemukan" Fix
+
+### Problem
+User tried to login with an existing email (confirmed in Supabase dashboard, is_active=TRUE, password_hash present), but got "Akun tidak ditemukan. Silakan daftar terlebih dahulu."
+
+### Root Cause
+Two compounding issues:
+1. **Case-sensitive email matching:** Supabase PostgREST `eq("email", email)` is case-sensitive. If user typed "Contact.KedaiRakyat@gmail.com" but DB stores "contact.kedairakyat@gmail.com", the query returns empty.
+2. **Silent exception swallowing:** `catch (_: Exception)` in `authenticateByEmail()` hid ALL errors (network, deserialization, configuration) with no logging. If Supabase fetch failed for any reason, it silently fell back to local cache which was also empty on a fresh install → `NotFound`.
+3. **Schema drift:** `supabase/schema.sql` was missing `password_hash` and `password_salt` columns (though live DB had them). This file is reference documentation — keeping it out of sync makes debugging harder.
+
+### Fixes Applied
+1. **UserRepository.authenticateByEmail():** Normalize email with `.trim().lowercase()` before querying. Changed Supabase filter from `eq("email", email)` to `ilike("email", normalizedEmail)` for case-insensitive match. Added `Log.w()` on exception instead of silent swallow.
+2. **UserRepository.getUserByEmailRemote():** Same `ilike` + trim + logging fixes.
+3. **UserRepository.registerOwner():** Store email as `email.trim().lowercase()` to ensure consistent casing in DB.
+4. **UserDao.getByEmail():** Changed Room query from `WHERE email = :email` to `WHERE LOWER(email) = LOWER(:email)` for case-insensitive local lookup.
+5. **supabase/schema.sql:** Added `password_hash TEXT` and `password_salt TEXT` columns to `users` CREATE TABLE definition.
+
+### Files changed
+- `UserRepository.kt`: Email normalization + ilike filter + logging
+- `UserDao.kt`: Case-insensitive email query
+- `supabase/schema.sql`: Added missing password columns
+
+### LESSONS
+- **Email matching must ALWAYS be case-insensitive.** Use `ilike` for Supabase PostgREST and `LOWER()` for Room SQL.
+- **Never use `catch (_: Exception)` without logging** in network calls — it hides configuration errors, deserialization failures, and auth issues. At minimum use `Log.w()`.
+- **Normalize email on storage** (`.trim().lowercase()`) to prevent future case mismatches.
+- **Keep schema.sql in sync with live DB** — it's the reference doc for new deployments and debugging.
+
+## 2026-02-18 — Keyboard Covers Fields Fix (Auth Screens)
+
+### Problem
+When tapping a text field in `EmailLoginScreen` or `RegistrationScreen`, the soft keyboard popped up and covered the input fields. Users couldn't see what they were typing.
+
+### Root Cause
+`enableEdgeToEdge()` is called in `MainActivity`, which causes the window to draw behind system bars (including the IME). When edge-to-edge is active, the manifest's `android:windowSoftInputMode="adjustResize"` is **ignored** on API 30+. The window no longer resizes when the keyboard appears. The scrollable Column had no awareness of the keyboard inset.
+
+### Fix Applied
+Added `imePadding()` modifier **before** `verticalScroll()` on the scrollable root `Column` in both screens:
+```kotlin
+modifier = Modifier
+    .fillMaxSize()
+    .imePadding()                          // shrinks viewport by keyboard height
+    .verticalScroll(rememberScrollState()) // allows scrolling within the shrunk space
+    .padding(horizontal = ..., vertical = ...)
+```
+
+### Why Modifier Order Matters
+- `imePadding()` **before** `verticalScroll()` → reduces the available height by keyboard height → scroll area shrinks → content scrolls to show focused field.
+- `imePadding()` **after** `verticalScroll()` → adds padding to the bottom of an already-infinite-height scroll container → does nothing useful.
+
+### Files changed
+- `feature/auth/EmailLoginScreen.kt`: Added `import androidx.compose.foundation.layout.imePadding` + `.imePadding()` before `.verticalScroll()`
+- `feature/auth/RegistrationScreen.kt`: Same changes
+
+### LESSON
+**Keyboard avoidance in Compose with edge-to-edge:**
+- `enableEdgeToEdge()` in Activity invalidates the manifest `windowSoftInputMode="adjustResize"`.
+- Use `imePadding()` modifier placed **before** `verticalScroll()` in the modifier chain.
+- This pattern also works for `LazyColumn` and other scrollable containers.
+- Already applied in `ProductFormScreen.kt` (see Menu Screen Improvements above) — apply consistently on all scrollable form screens.
+
+## 2026-02-18 — Supabase Connection Fix (Placeholder Credentials)
+
+### Problem
+1. Registration succeeded locally but never synced to Supabase (new records not appearing in dashboard).
+2. Login with existing user ("contact.kedairakyat@gmail.com") failed with "Akun tidak ditemukan" despite user existing in Supabase with `is_active=TRUE` and valid password hash.
+
+### Root Cause
+`app/build.gradle.kts` had `buildConfigField("String", "SUPABASE_URL", "\"PLACE_HERE\"")` and same for `SUPABASE_ANON_KEY`. The app was built with literal `"PLACE_HERE"` as Supabase URL — every Supabase HTTP request failed immediately. All failures were caught silently by `catch (_: Exception)` blocks throughout the codebase.
+
+This meant:
+- **Registration:** `pushToSupabase()` failed → enqueued to SyncQueue → SyncQueue retry also failed → data never reached Supabase.
+- **Login:** `authenticateByEmail()` Supabase fetch failed → fell back to local Room cache → fresh install had empty cache → `NotFound`.
+
+### Fix Applied
+1. **`app/build.gradle.kts`:** Changed from hardcoded placeholders to `localProperties.getProperty("SUPABASE_URL", "")` pattern. Reads credentials from `local.properties` at build time.
+2. **`local.properties`:** Added actual Supabase URL and anon key (file is gitignored — credentials never committed).
+3. **`RestaurantRepository.kt`:** Added `Log.w()` to catch block in `create()` for visibility.
+4. **`UserRepository.kt`:** Added `Log.w()` to catch block in `registerOwner()`. Also fixed SyncQueue payload to use `normalizedEmail` instead of raw `email`.
+
+### Files changed
+- `app/build.gradle.kts`: `import java.util.Properties`, load `localProperties`, read `SUPABASE_URL`/`SUPABASE_ANON_KEY` from it
+- `local.properties`: Added `SUPABASE_URL` and `SUPABASE_ANON_KEY` entries
+- `RestaurantRepository.kt`: Added `Log.w` + `import android.util.Log`
+- `UserRepository.kt`: Added `Log.w` to `registerOwner` catch, fixed payload email
+
+### LESSONS
+- **NEVER use placeholder credentials in committed `build.gradle.kts`** — use `local.properties` (gitignored) + `Properties().load()` pattern.
+- **Placeholder credentials cause total silent failure** — every Supabase operation fails but is caught by try-catch. The app appears to "work" locally but nothing syncs.
+- **To set up a new dev environment:** Add `SUPABASE_URL=https://xxx.supabase.co` and `SUPABASE_ANON_KEY=eyJ...` to `local.properties`.
+- **Always `Log.w()` in sync catch blocks** — silent failures are the #1 cause of debugging difficulty in this project.
+
+## 2026-02-18 — Product Components Accumulation & Variants Not Saving
+
+### Problem 1: product_components accumulated on every save
+When editing a menu item multiple times, each save added new component records to Supabase without cleaning up old ones. The `deleteByProductId` method pushed DELETE by individual component IDs read from Room. If those IDs didn't exist in Supabase (e.g., from the previous restaurantId="" bug), the DELETE was a no-op, while the subsequent INSERT succeeded — causing accumulation.
+
+### Problem 2: Variants intermittently not saved to Supabase
+Variants added in the product form were saved to Room but not reliably synced to Supabase. Had to try multiple times to get them stored.
+
+### Root Cause (both issues): Read-after-write timing + stale ID matching
+1. **Components:** `deleteByProductId` deleted from Room by `productId`, then pushed individual DELETEs to Supabase by `component.id`. If Supabase had different IDs (or records that were never synced due to earlier bugs), the bulk cleanup never happened.
+2. **Variants:** `ProductRepository.createProduct/updateProduct` called `syncManager.pushToSupabase("variants", "INSERT", v.id)` which calls `pushUpsert` → `variantDao.getById(recordId) ?: return`. After `variantDao.insertAll(variants)`, the Room read-back could return null due to write-commit timing, causing the push to silently skip.
+
+### Fixes Applied
+
+#### SyncManager — New direct-push methods
+- `deleteVariantsByProductId(productId)` — bulk DELETE from Supabase `WHERE product_id = :productId`
+- `pushVariantsDirect(variants: List<VariantEntity>)` — pushes from in-memory list, no Room read
+- `deleteComponentsByProductId(productId)` — bulk DELETE from Supabase `WHERE parent_product_id = :productId`
+- `pushComponentDirect(entity: ProductComponentEntity)` — pushes from in-memory entity, no Room read
+
+#### ProductRepository
+- `createProduct()`: Changed variant sync from `pushToSupabase("variants", "INSERT", v.id)` (Room read-back) to `pushVariantsDirect(variants)` (in-memory)
+- `updateProduct()`: Changed old variant cleanup from individual ID DELETEs to `deleteVariantsByProductId(productId)` (bulk). Changed new variant push to `pushVariantsDirect(variants)` (in-memory)
+
+#### ProductComponentRepository
+- `addComponent()`: Changed from `pushToSupabase("product_components", "INSERT", entity.id)` to `pushComponentDirect(entity)` (in-memory)
+- `deleteByProductId()`: Changed from individual ID DELETEs to `deleteComponentsByProductId(productId)` (bulk by parent_product_id)
+- Added `Log.w` to catch blocks, added `companion object { TAG }`
+
+### Files changed
+- `SyncManager.kt`: Added `VariantEntity` + `ProductComponentEntity` imports, added 4 new direct-push/delete methods
+- `ProductRepository.kt`: Changed variant sync in `createProduct` + `updateProduct` to use direct methods
+- `ProductComponentRepository.kt`: Changed component push + delete to use direct methods, added logging
+
+### LESSONS
+- **For child entity sync, always use bulk DELETE by parent FK** (e.g., `WHERE parent_product_id = :id`) instead of deleting by individual child IDs. This ensures cleanup even when Room and Supabase are out of sync.
+- **For batch-inserted child entities, always push from in-memory list** — never read back from Room after `insertAll()`. This is the same read-after-write pattern learned from goods_receiving_items. Applies to: variants, product_components, goods_receiving_items, transaction_items.
+- **Pattern for replace-children operations** (delete old + insert new): (1) delete locally, (2) bulk DELETE from Supabase by parent FK, (3) insert locally, (4) push new entities from memory.
+
+## 2026-02-18 — General Ledger for Cash Management
+
+### Goal
+Replace device-local DataStore-based cash balance with a synced `general_ledger` table that tracks all cash events and syncs to Supabase.
+
+### Architecture Decision
+- **Ledger REPLACES old calculation:** Old: `CashBalanceDataStore.initialBalance + SUM(cash sales) - SUM(withdrawals)`. New: `SUM(general_ledger.amount)` where signed amounts encode direction.
+- **LedgerType enum:** `INITIAL_BALANCE`, `SALE`, `WITHDRAWAL`, `ADJUSTMENT`
+- **Signed amounts:** positive = inflow, negative = outflow. Balance = SUM(amount).
+- **12th tenant-scoped table** with `restaurant_id`, follows standard network-first sync pattern.
+
+### What was created
+- `LedgerType.kt` — enum for ledger entry types
+- `GeneralLedgerEntity.kt` — Room entity with indices on restaurant_id, type, date, reference_id, sync_status
+- `GeneralLedgerDao.kt` — DAO with getBalance (SUM), getTotalByType, getByDateRange, getLatestInitialBalance
+- `GeneralLedgerDto.kt` — Supabase DTO with kotlinx.serialization
+- `GeneralLedgerRepository.kt` — network-first repo with `recordEntry()` for creating ledger entries
+
+### What was modified
+- `AyaKasirDatabase.kt` — version 13→14, MIGRATION_13_14, added entity + DAO
+- `DatabaseModule.kt` — registered migration + DAO provider
+- `SyncManager.kt` — general_ledger in Phase 1 pull + pushUpsert handler
+- `RealtimeManager.kt` — general_ledger listener for INSERT/UPDATE/DELETE
+- `CashBalanceRepository.kt` — complete rewrite: now uses GeneralLedgerRepository flows only (removed DataStore + TransactionRepo + CashWithdrawalRepo dependencies)
+- `CashBalance.kt` — added `totalAdjustments` field
+- `TransactionRepository.kt` — creates SALE ledger entry on CASH transactions
+- `CashWithdrawalRepository.kt` — creates WITHDRAWAL ledger entry (negative amount)
+- `InitialBalanceViewModel.kt` — uses GeneralLedgerRepository instead of CashBalanceDataStore
+- `DtoEntityMappers.kt` — added GeneralLedger Entity↔DTO mappers
+- `supabase/schema.sql` — added general_ledger table + RLS + policy
+- Supabase live migration applied + added to realtime publication
+
+### LESSONS
+- **Ledger pattern is simpler than multi-source combine:** Instead of `combine(dataStore, transactionFlow, withdrawalFlow)`, a single `SUM(amount)` query replaces 3 data sources.
+- **Signed amounts eliminate separate tracking:** No need for separate "total sales" and "total withdrawals" columns — positive/negative amounts in one table encode both direction and magnitude.
+- **general_ledger is Phase 1 in pull sync** — it has no FK dependencies on other tenant tables (only references restaurant_id from restaurants, which is pulled as part of user session setup).
+- **Side-effect ledger entries (SALE, WITHDRAWAL) must be created in the originating repository** — TransactionRepository creates SALE entries, CashWithdrawalRepository creates WITHDRAWAL entries. This keeps the ledger logic close to the business event.
+
+## 2026-02-18 — CashBalance Constructor Missing Argument
+
+### Problem
+Build error: `No value passed for parameter 'currentBalance'` at `PosViewModel.kt:100`.
+
+### Root Cause
+When `totalAdjustments` was added to `CashBalance` data class, `currentBalance` (no default value) became the 5th parameter. `PosViewModel` still used `CashBalance(0, 0, 0, 0)` (4 args) — positional args mapped to `initialBalance`, `totalCashSales`, `totalWithdrawals`, `totalAdjustments`, leaving `currentBalance` unset.
+
+### Fix
+Changed `CashBalance(0, 0, 0, 0)` → `CashBalance(0, 0, 0, 0, 0)` in `PosViewModel.kt`.
+
+### LESSON
+When adding fields to a data class used as a default/empty value elsewhere, search all constructor call sites (`ClassName(`) and update them. Fields without default values break positional calls silently at compile time.
+
+## 2026-02-18 — Inventory COGS & Nilai Stok
+
+### Goal
+Stok Barang screen shows weighted-average COGS (HPP) and item value per item, plus total inventory value in the header.
+
+### Architecture
+- **COGS source:** `goods_receiving_items.cost_per_unit` (Rp per purchasing unit) + `qty` + `unit`
+- **Formula:** weighted average COGS per base unit = `SUM(qty × costPerUnit) / SUM(normalizedQty)` where `normalizedQty = UnitConverter.normalizeToBase(qty, unit).first`
+- **Item value:** `avgCogs (Rp/base unit) × currentQty (base unit)` = total Rp
+- **Total value:** `SUM(itemValue)` across all inventory items
+
+### Display Formatting
+- avgCogs stored as per base unit (Rp/g, Rp/mL, Rp/pcs)
+- Display converts to natural unit for readability:
+  - "g" → `CurrencyFormatter.format(avgCogs × 1000) + "/kg"`
+  - "mL" → `CurrencyFormatter.format(avgCogs × 1000) + "/L"`
+  - "pcs" → `CurrencyFormatter.format(avgCogs) + "/pcs"`
+- If `avgCogs == 0L` (no purchase data), show "-"
+
+### Files Changed
+- `GoodsReceivingDao.kt`: Added `getAllItems(restaurantId): Flow<List<GoodsReceivingItemEntity>>`
+- `InventoryItem.kt`: Added `avgCogs: Long`, `itemValue: Long`, `displayAvgCogs`, `displayItemValue` (also imports CurrencyFormatter)
+- `InventoryRepository.kt`: Injected `GoodsReceivingDao`, 5-flow combine, `buildCogsMap()` private function
+- `InventoryViewModel.kt`: Added `totalInventoryValue: StateFlow<Long>`
+- `InventoryScreen.kt`: Header row (title + total value top-right), card expands to show "HPP avg" and item value row when avgCogs > 0
+
+### Pattern: 5-flow combine
+```kotlin
+combine(flow1, flow2, flow3, flow4, flow5) { a, b, c, d, e -> ... }
+```
+`kotlinx.coroutines.flow.combine` has typed overloads up to 5 flows.
+
+### LESSON
+- Domain model can import utility classes (CurrencyFormatter, UnitConverter) if display formatting logically belongs to the domain. Consistent with existing `displayQty` pattern using `UnitConverter`.
+- When computing COGS from purchase history, always normalize to base unit before averaging — different purchase units (kg, g) for the same item must be made comparable first.
+
+## 2026-02-18 — Transaction Does Not Update Stok Barang
+
+### Problem
+After completing a sale in POS, Stok Barang did not reflect the decremented stock. Any pull-to-refresh or background sync (WorkManager 15 min) reverted inventory back to pre-transaction values.
+
+### Root Cause
+`TransactionRepository.createTransaction()` called `inventoryDao.decrementStock()` (Room updated ✓), but the corresponding Supabase push for inventory was only enqueued inside the transaction `catch` block. On **success**, inventory changes were never pushed to Supabase. Any subsequent pull fetched stale Supabase values and overwrote local Room — undoing the decrement.
+
+### Fix
+Applied Sync Side-Effects Rule: push inventory changes independently after transaction push, unconditionally:
+```kotlin
+inventorySyncEntries.forEach { entry ->
+    try {
+        syncManager.pushToSupabase(entry.tableName, entry.operation, entry.recordId)
+    } catch (e: Exception) {
+        syncQueueDao.enqueue(entry)
+        syncScheduler.requestImmediateSync()
+    }
+}
+```
+
+### Files Changed
+- `TransactionRepository.kt`: Added independent inventory push loop after the transaction push try-catch
+
+### LESSON
+Inventory side-effects from transactions must follow the **Sync Side-Effects Rule** — push independently, never nested inside the parent entity push. Same rule applies to: goods_receiving → inventory, transaction → inventory. Violation causes Supabase inventory to remain stale; any pull will revert local Room to pre-transaction values.
+
+## 2026-02-19 -- Manajemen User Screen Improvements
+
+### Changes Made
+1. **Missing fields in Tambah User form:** Added `email` (optional), `phone` (optional), `password` (optional) fields to `AddUserDialog` and wired through ViewModel to Repository.
+2. **restaurant_id auto-assigned:** `UserRepository` now injects `SessionManager`. `createUser()` sets `restaurantId = sessionManager.currentRestaurantId` on new user entities.
+3. **Scrollable Akses Fitur checkboxes:** Feature list wrapped in `Box(Modifier.heightIn(max = 180.dp)) { LazyColumn(...) }` in both Add and Edit dialogs.
+4. **Delete user:** Added `deleteById()` to `UserDao`. `UserRepository.deleteUser()` does Room delete + Supabase DELETE push. `EditUserDialog` has "Hapus" button triggering a confirmation AlertDialog.
+5. **Pull-to-refresh:** `UserManagementScreen` uses `PullToRefreshBox`. ViewModel exposes `isRefreshing` + `refresh()` via `SyncManager.pullAllFromSupabase()`.
+6. **Settings conditional rendering:** New `SettingsViewModel.kt` exposes `showFullSettings: StateFlow<Boolean>`. Cashiers without `UserFeature.SETTINGS` only see the logout button.
+
+### Key Patterns Confirmed
+- **AlertDialog delete confirmation:** Separate `showDeleteConfirm: Boolean` state -> confirmation AlertDialog before calling ViewModel delete.
+- **Bounded-height scrollable list inside AlertDialog:** `Box(Modifier.heightIn(max = Xdp)) { LazyColumn(...) }` -- safe approach, avoids nested scroll container issues.
+- **Feature-gated screen content:** Minimal ViewModel reads `sessionManager.currentUser`, maps to `showFullSettings: Boolean`. Screen uses `if (showFullSettings)` to show/hide content blocks.
+- **createUser restaurantId rule:** Always set `restaurantId = sessionManager.currentRestaurantId` on new user entities to ensure tenant isolation.
+
+## 2026-02-19 — QRIS Cloud Sync (Cross-Device Settings)
+
+### Goal
+QRIS image and merchant name now persist to Supabase so any device that logs in loads the same QRIS configuration automatically.
+
+### Architecture
+- **Image storage:** Supabase Storage bucket `qris-images`, path `{restaurantId}/qris.jpg` (public, upsert on save)
+- **Metadata storage:** `restaurants.qris_image_url` (TEXT) + `restaurants.qris_merchant_name` (TEXT)
+- **Local cache:** `QrisSettingsDataStore` (unchanged) caches the Supabase URL for offline display
+- **Pull on login:** `SyncManager.pullAllFromSupabase()` Phase 1 now fetches the restaurant record and populates DataStore with QRIS fields
+- **DB migration:** v14 → v15, adds `qris_image_url` + `qris_merchant_name` to Room `restaurants` table
+
+### Upload flow (QrisRepository.saveQrisSettings)
+1. If imageUri is `content://` → upload bytes to Storage → get public HTTPS URL
+2. If imageUri is `https://` already → use as-is (re-save or merchant name change only)
+3. If imageUri is blank → save null/empty
+4. UPDATE `restaurants` table in Supabase with new URL + merchant name via PostgREST
+5. Save URL + merchant to DataStore (local cache)
+
+### Pull flow (SyncManager.pullAllFromSupabase Phase 1)
+- Fetch restaurant record by ID → insert to Room (`restaurantDao.insert`) → if `qris_image_url` non-empty, call `qrisSettingsDataStore.saveSettings()` → DataStore populated → `QrisPaymentGateway.isQrisConfigured` becomes true
+
+### Files created
+- `core/data/repository/QrisRepository.kt` — upload + save + pull logic
+
+### Files changed
+- `gradle/libs.versions.toml` — added `supabase-storage`
+- `app/build.gradle.kts` — added `implementation(libs.supabase.storage)`
+- `SupabaseClientProvider.kt` — installed `Storage` plugin
+- `RestaurantEntity.kt` — added `qrisImageUrl: String?`, `qrisMerchantName: String?` fields
+- `RestaurantDto.kt` — added matching `@SerialName` fields
+- `DtoEntityMappers.kt` — updated Restaurant Entity↔DTO mappers
+- `AyaKasirDatabase.kt` — version 15, MIGRATION_14_15
+- `DatabaseModule.kt` — registered MIGRATION_14_15
+- `SyncManager.kt` — injected `QrisSettingsDataStore`, added restaurant QRIS pull in Phase 1
+- `QrisSettingsViewModel.kt` — injected `QrisRepository`, added `UiState(isUploading, error, savedSuccessfully)`
+- `QrisSettingsScreen.kt` — loading spinner on save button, disabled inputs during upload, Snackbar for success/error
+- `supabase/schema.sql` — added `qris_image_url` + `qris_merchant_name` to restaurants table definition + bucket setup comment
+
+### Supabase setup required (one-time)
+1. Run ALTER TABLE: `ALTER TABLE restaurants ADD COLUMN IF NOT EXISTS qris_image_url TEXT; ALTER TABLE restaurants ADD COLUMN IF NOT EXISTS qris_merchant_name TEXT;`
+2. Create Storage bucket: Dashboard → Storage → New bucket → name: `qris-images`, Public: true
+3. Add RLS policy on `storage.objects`: allow INSERT for authenticated / SELECT for public (anon) on bucket `qris-images`
+
+### LESSONS
+- **Settings stored only in DataStore are device-local.** Any setting that needs cross-device persistence must be backed by Supabase (either a table column or Storage).
+- **Supabase Storage upload pattern:** `supabaseClient.storage.from("bucket").upload(path, bytes) { upsert = true }` → `publicUrl(path)` returns the CDN-accessible URL. Store this URL in PostgREST table for other devices to fetch.
+- **Local content:// URIs are not portable.** Always upload to cloud storage and save the public HTTPS URL. Detect by checking `imageUri.startsWith("https://")` — if so, no upload needed (already a remote URL).
+- **Restaurant record pull in SyncManager.pullAllFromSupabase Phase 1:** `restaurants` table is the tenant itself (not in the 12 tenant-scoped tables), but still needs to be pulled for cross-device settings like QRIS. Add it alongside categories/vendors/users in Phase 1 (no FK dependencies).
+
+## 2026-02-19 — QRIS Upload Fix (Storage plugin missing from Hilt DI)
+
+### Problem
+QRIS image upload silently failed — image never stored in Supabase Storage. No error shown to user (caught by try-catch in ViewModel).
+
+### Root Cause
+`NetworkModule.provideSupabaseClient()` (the Hilt-provided `SupabaseClient`) only installed `Postgrest`, `Auth`, `Realtime` — **missing `Storage` plugin**. The separate `SupabaseClientProvider.kt` had `Storage` installed, but that class is NOT used by Hilt injection. `QrisRepository` injects `SupabaseClient` from Hilt, so `supabaseClient.storage` would throw at runtime.
+
+### Fix
+- Added `import io.github.jan.supabase.storage.Storage` to `NetworkModule.kt`
+- Added `install(Storage)` to `provideSupabaseClient()` builder block
+
+### LESSON
+- **All Supabase plugins must be installed in the Hilt-provided client (`NetworkModule`), not in `SupabaseClientProvider`.** The `SupabaseClientProvider` is a legacy wrapper; Hilt injects `SupabaseClient` directly from `NetworkModule`. When adding new Supabase features (Storage, Auth, Realtime), always verify the plugin is installed in `NetworkModule.provideSupabaseClient()`.
+
+## 2026-02-19 — QRIS Storage RLS Policy Fix (anon vs authenticated)
+
+### Problem
+`Gagal menyimpan: new row violates row-level security policy` when uploading QRIS image to Supabase Storage.
+
+### Root Cause
+Storage bucket RLS INSERT policy was set to `TO authenticated`, but this app uses the **anon key** (no Supabase Auth module for login). All requests arrive as `anon` role, not `authenticated`. The INSERT was rejected by RLS.
+
+### Fix (Supabase SQL Editor, no app code change)
+- Changed Storage `INSERT` policy on `storage.objects` from `TO authenticated` → `TO anon` with `WITH CHECK (bucket_id = 'qris-images')`
+- Added `UPDATE` policy for `TO anon` (needed because `upload { upsert = true }` performs UPDATE on re-upload)
+- Ensured `SELECT` policy also targets `TO anon`
+
+### LESSON
+- **This app does NOT use Supabase Auth.** All Supabase requests use the anon key. Therefore ALL RLS policies (tables AND storage) must target the `anon` role, not `authenticated`. When writing RLS policies for this project, always use `TO anon` or `TO public`.
+
+## 2026-02-19 — Settings: Owner-Only Cards for Cashier Role
+
+### Change
+When a Cashier has SETTINGS feature access, they now only see **Pengaturan Printer** + **Keluar**. Six owner-only cards are hidden: Saldo Awal Kas, Manajemen User, Manajemen Kategori, Manajemen Vendor, Manajemen Barang, Pengaturan QRIS.
+
+### Implementation
+- `SettingsViewModel`: Added `isOwner: StateFlow<Boolean>` — maps `sessionManager.currentUser` to `user.role == UserRole.OWNER`.
+- `SettingsScreen`: Collects `isOwner`, wraps the 6 owner-only cards inside `if (isOwner) { ... }`.
+- Printer card stays inside `if (showFullSettings)` but outside `if (isOwner)` — visible to any user with settings access.
+
+### Files changed
+- `feature/settings/SettingsViewModel.kt`: Added `isOwner` StateFlow
+- `feature/settings/SettingsScreen.kt`: Collect `isOwner`, wrap 6 cards in `if (isOwner)`
+
+### Visibility matrix
+| Card | OWNER | CASHIER+SETTINGS | CASHIER (no SETTINGS) |
+|------|-------|-------------------|-----------------------|
+| Printer | Yes | Yes | No |
+| Saldo Awal Kas | Yes | No | No |
+| Manajemen User | Yes | No | No |
+| Manajemen Kategori | Yes | No | No |
+| Manajemen Vendor | Yes | No | No |
+| Manajemen Barang | Yes | No | No |
+| Pengaturan QRIS | Yes | No | No |
+| Keluar | Yes | Yes | Yes |
+
+## 2026-02-19 — Pembelian: Owner-Only Edit/Delete on Goods Receiving
+
+### Change
+Edit and Delete buttons (and FAB "Tambah") on Penerimaan Barang cards are now hidden for Cashier role. Only Owner can create, edit, or delete goods receiving records.
+
+### Implementation
+- `PurchasingViewModel`: Added `val isOwner: Boolean get() = sessionManager.isOwner` (SessionManager already injected).
+- `GoodsReceivingListScreen`: Read `viewModel.isOwner`, wrapped Edit/Delete `IconButton`s and `FloatingActionButton` in `if (isOwner)`.
+
+### Files changed
+- `feature/purchasing/PurchasingViewModel.kt`: Added `isOwner` property
+- `feature/purchasing/GoodsReceivingListScreen.kt`: Conditional rendering of Edit/Delete/FAB based on `isOwner`
+
+### Pattern
+For role-gated UI in screens that share a ViewModel with SessionManager already injected, expose `val isOwner: Boolean get() = sessionManager.isOwner` from ViewModel and use `if (isOwner)` in Composable. No StateFlow needed for a synchronous property read.
+
+## 2026-02-19 — Pembelian: Cashier Can Add but Not Edit/Delete
+
+### Change
+Reversed FAB restriction from previous change. Cashiers can now add new Penerimaan Barang records (FAB always visible), but still cannot edit or delete existing records (Edit/Delete buttons remain owner-only).
+
+### Files changed
+- `feature/purchasing/GoodsReceivingListScreen.kt`: Removed `if (isOwner)` wrapper around FAB. Edit/Delete `IconButton`s remain inside `if (isOwner)`.
+
+### Updated Visibility Matrix (Penerimaan Barang)
+| Action | OWNER | CASHIER |
+|--------|-------|---------|
+| Add (FAB) | Yes | Yes |
+| Edit | Yes | No |
+| Delete | Yes | No |
+| View/Expand | Yes | Yes |

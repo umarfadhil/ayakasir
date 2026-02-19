@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -5,6 +7,11 @@ plugins {
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.hilt)
     alias(libs.plugins.ksp)
+}
+
+val localProperties = Properties().apply {
+    val file = rootProject.file("local.properties")
+    if (file.exists()) load(file.inputStream())
 }
 
 android {
@@ -20,9 +27,10 @@ android {
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
-        // Supabase placeholders -- replace with actual values
-        buildConfigField("String", "SUPABASE_URL", "\"PLACE_HERE\"")
-        buildConfigField("String", "SUPABASE_ANON_KEY", "\"PLACE_HERE\"")
+        // Supabase credentials loaded from local.properties (gitignored)
+        buildConfigField("String", "SUPABASE_URL", "\"${localProperties.getProperty("SUPABASE_URL", "")}\"")
+        buildConfigField("String", "SUPABASE_ANON_KEY", "\"${localProperties.getProperty("SUPABASE_ANON_KEY", "")}\"")
+
 
         ksp {
             arg("room.schemaLocation", "$projectDir/schemas")
@@ -108,6 +116,7 @@ dependencies {
     implementation(libs.supabase.postgrest)
     implementation(libs.supabase.auth)
     implementation(libs.supabase.realtime)
+    implementation(libs.supabase.storage)
 
     // Ktor (Supabase transport - OkHttp for WebSocket support)
     implementation(libs.ktor.client.okhttp)

@@ -1,5 +1,6 @@
 package com.ayakasir.app.core.data.repository
 
+import android.util.Log
 import com.ayakasir.app.core.data.local.dao.ProductComponentDao
 import com.ayakasir.app.core.data.local.dao.ProductDao
 import com.ayakasir.app.core.data.local.dao.SyncQueueDao
@@ -8,6 +9,7 @@ import com.ayakasir.app.core.data.local.entity.ProductComponentEntity
 import com.ayakasir.app.core.data.local.entity.SyncQueueEntity
 import com.ayakasir.app.core.domain.model.ProductComponent
 import com.ayakasir.app.core.domain.model.SyncStatus
+import com.ayakasir.app.core.session.SessionManager
 import com.ayakasir.app.core.sync.SyncManager
 import com.ayakasir.app.core.sync.SyncScheduler
 import com.ayakasir.app.core.util.UuidGenerator
@@ -23,8 +25,15 @@ class ProductComponentRepository @Inject constructor(
     private val variantDao: VariantDao,
     private val syncQueueDao: SyncQueueDao,
     private val syncScheduler: SyncScheduler,
-    private val syncManager: SyncManager
+    private val syncManager: SyncManager,
+    private val sessionManager: SessionManager
 ) {
+    companion object {
+        private const val TAG = "ProductComponentRepo"
+    }
+
+    private val restaurantId: String get() = sessionManager.currentRestaurantId ?: ""
+
     fun getComponentsByProductId(productId: String): Flow<List<ProductComponent>> =
         productComponentDao.getByProductId(productId).map { list ->
             list.map { entity -> entity.toDomain() }
@@ -44,14 +53,17 @@ class ProductComponentRepository @Inject constructor(
             componentVariantId = componentVariantId,
             requiredQty = requiredQty,
             unit = unit,
+            restaurantId = restaurantId,
             syncStatus = SyncStatus.PENDING.name,
             updatedAt = System.currentTimeMillis()
         )
         productComponentDao.insert(entity)
 
+        // Push directly from memory (avoids read-after-write timing issue)
         try {
-            syncManager.pushToSupabase("product_components", "INSERT", entity.id)
+            syncManager.pushComponentDirect(entity)
         } catch (e: Exception) {
+            Log.w(TAG, "Failed to push component: ${e.message}")
             syncQueueDao.enqueue(
                 SyncQueueEntity(
                     tableName = "product_components",
@@ -85,6 +97,14 @@ class ProductComponentRepository @Inject constructor(
 
     suspend fun deleteByProductId(productId: String) {
         productComponentDao.deleteByProductId(productId)
+
+        // Bulk delete from Supabase by parent_product_id — ensures cleanup even if
+        // Room and Supabase are out of sync (e.g. old records with wrong restaurantId)
+        try {
+            syncManager.deleteComponentsByProductId(productId)
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to delete components from Supabase: ${e.message}")
+        }
     }
 
     private suspend fun ProductComponentEntity.toDomain(): ProductComponent {

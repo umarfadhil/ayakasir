@@ -8,6 +8,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 import com.ayakasir.app.core.data.local.converter.Converters
 import com.ayakasir.app.core.data.local.dao.CashWithdrawalDao
 import com.ayakasir.app.core.data.local.dao.CategoryDao
+import com.ayakasir.app.core.data.local.dao.GeneralLedgerDao
 import com.ayakasir.app.core.data.local.dao.GoodsReceivingDao
 import com.ayakasir.app.core.data.local.dao.InventoryDao
 import com.ayakasir.app.core.data.local.dao.ProductComponentDao
@@ -20,6 +21,7 @@ import com.ayakasir.app.core.data.local.dao.VendorDao
 import com.ayakasir.app.core.data.local.dao.VariantDao
 import com.ayakasir.app.core.data.local.entity.CashWithdrawalEntity
 import com.ayakasir.app.core.data.local.entity.CategoryEntity
+import com.ayakasir.app.core.data.local.entity.GeneralLedgerEntity
 import com.ayakasir.app.core.data.local.entity.GoodsReceivingEntity
 import com.ayakasir.app.core.data.local.entity.GoodsReceivingItemEntity
 import com.ayakasir.app.core.data.local.entity.InventoryEntity
@@ -48,9 +50,10 @@ import com.ayakasir.app.core.data.local.entity.VariantEntity
         TransactionEntity::class,
         TransactionItemEntity::class,
         SyncQueueEntity::class,
-        CashWithdrawalEntity::class
+        CashWithdrawalEntity::class,
+        GeneralLedgerEntity::class
     ],
-    version = 12,
+    version = 15,
     exportSchema = true
 )
 @TypeConverters(Converters::class)
@@ -67,6 +70,7 @@ abstract class AyaKasirDatabase : RoomDatabase() {
     abstract fun transactionDao(): TransactionDao
     abstract fun syncQueueDao(): SyncQueueDao
     abstract fun cashWithdrawalDao(): CashWithdrawalDao
+    abstract fun generalLedgerDao(): GeneralLedgerDao
 
     companion object {
         /**
@@ -272,6 +276,56 @@ abstract class AyaKasirDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE `transactions` ADD COLUMN `restaurant_id` TEXT NOT NULL DEFAULT ''")
                 db.execSQL("ALTER TABLE `transaction_items` ADD COLUMN `restaurant_id` TEXT NOT NULL DEFAULT ''")
                 db.execSQL("ALTER TABLE `cash_withdrawals` ADD COLUMN `restaurant_id` TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
+        /**
+         * Migration 12→13: Add unit column to inventory table.
+         * Stores the base measurement unit (g, mL, pcs) for unit conversion support.
+         */
+        val MIGRATION_12_13 = object : Migration(12, 13) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `inventory` ADD COLUMN `unit` TEXT NOT NULL DEFAULT 'pcs'")
+            }
+        }
+
+        /**
+         * Migration 13→14: Create general_ledger table for cashflow tracking.
+         * Replaces DataStore-based initial balance with a proper synced ledger.
+         */
+        val MIGRATION_13_14 = object : Migration(13, 14) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `general_ledger` (" +
+                    "`id` TEXT NOT NULL, " +
+                    "`restaurant_id` TEXT NOT NULL DEFAULT '', " +
+                    "`type` TEXT NOT NULL, " +
+                    "`amount` INTEGER NOT NULL, " +
+                    "`reference_id` TEXT, " +
+                    "`description` TEXT NOT NULL, " +
+                    "`date` INTEGER NOT NULL, " +
+                    "`user_id` TEXT NOT NULL, " +
+                    "`sync_status` TEXT NOT NULL, " +
+                    "`updated_at` INTEGER NOT NULL, " +
+                    "PRIMARY KEY(`id`))"
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_general_ledger_restaurant_id` ON `general_ledger` (`restaurant_id`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_general_ledger_type` ON `general_ledger` (`type`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_general_ledger_date` ON `general_ledger` (`date`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_general_ledger_reference_id` ON `general_ledger` (`reference_id`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_general_ledger_sync_status` ON `general_ledger` (`sync_status`)")
+            }
+        }
+
+        /**
+         * Migration 14→15: Add QRIS settings columns to restaurants table.
+         * qris_image_url: Supabase Storage public URL of the QRIS image.
+         * qris_merchant_name: Merchant name displayed on QRIS screen.
+         */
+        val MIGRATION_14_15 = object : Migration(14, 15) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `restaurants` ADD COLUMN `qris_image_url` TEXT")
+                db.execSQL("ALTER TABLE `restaurants` ADD COLUMN `qris_merchant_name` TEXT")
             }
         }
     }

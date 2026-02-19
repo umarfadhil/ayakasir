@@ -59,6 +59,7 @@ fun GoodsReceivingListScreen(
 ) {
     val receivingList by viewModel.receivingList.collectAsStateWithLifecycle()
     val isRefreshing by viewModel.isRefreshing.collectAsStateWithLifecycle()
+    val isOwner = viewModel.isOwner
     var showDeleteDialog by remember { mutableStateOf(false) }
     var receivingToDelete by remember { mutableStateOf<String?>(null) }
 
@@ -113,26 +114,28 @@ fun GoodsReceivingListScreen(
                                         )
                                     }
                                     Row(verticalAlignment = Alignment.CenterVertically) {
-                                        IconButton(
-                                            onClick = { onEditReceiving(receiving.id) }
-                                        ) {
-                                            Icon(
-                                                Icons.Filled.Edit,
-                                                contentDescription = "Edit",
-                                                tint = MaterialTheme.colorScheme.primary
-                                            )
-                                        }
-                                        IconButton(
-                                            onClick = {
-                                                receivingToDelete = receiving.id
-                                                showDeleteDialog = true
+                                        if (isOwner) {
+                                            IconButton(
+                                                onClick = { onEditReceiving(receiving.id) }
+                                            ) {
+                                                Icon(
+                                                    Icons.Filled.Edit,
+                                                    contentDescription = "Edit",
+                                                    tint = MaterialTheme.colorScheme.primary
+                                                )
                                             }
-                                        ) {
-                                            Icon(
-                                                Icons.Filled.Delete,
-                                                contentDescription = "Hapus",
-                                                tint = MaterialTheme.colorScheme.error
-                                            )
+                                            IconButton(
+                                                onClick = {
+                                                    receivingToDelete = receiving.id
+                                                    showDeleteDialog = true
+                                                }
+                                            ) {
+                                                Icon(
+                                                    Icons.Filled.Delete,
+                                                    contentDescription = "Hapus",
+                                                    tint = MaterialTheme.colorScheme.error
+                                                )
+                                            }
                                         }
                                         Icon(
                                             imageVector = if (isExpanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,

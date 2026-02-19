@@ -97,7 +97,7 @@ class PosViewModel @Inject constructor(
 
     val cashBalance: StateFlow<CashBalance> = cashBalanceRepository
         .getCurrentBalance()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), CashBalance(0, 0, 0, 0))
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), CashBalance(0, 0, 0, 0, 0))
 
     val isQrisConfigured: StateFlow<Boolean> = qrisSettingsDataStore.isConfigured
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)

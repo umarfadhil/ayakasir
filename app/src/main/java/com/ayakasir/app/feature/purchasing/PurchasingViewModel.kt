@@ -36,6 +36,8 @@ class PurchasingViewModel @Inject constructor(
     private val sessionManager: SessionManager
 ) : ViewModel() {
 
+    val isOwner: Boolean get() = sessionManager.isOwner
+
     private val _isRefreshing = MutableStateFlow(false)
     val isRefreshing: StateFlow<Boolean> = _isRefreshing.asStateFlow()
 

@@ -13,14 +13,14 @@
 ## Core Architecture (app/src/main/java/com/ayakasir/app/core/)
 
 ### Data Layer
-- **local/entity/** - Room entities (15+ tables): User, Product, Category, Variant, Transaction, SyncQueue, etc.
-- **local/dao/** - Room DAOs with Flow<List<T>> queries
+- **local/entity/** - Room entities (16+ tables): User, Product, Category, Variant, Transaction, GeneralLedger, SyncQueue, etc.
+- **local/dao/** - Room DAOs with Flow<List<T>> queries (includes GeneralLedgerDao)
 - **local/relation/** - Room relations: ProductWithVariants, TransactionWithItems, etc.
 - **local/converter/** - Room type converters
 - **local/datastore/** - DataStore for cash balance, QRIS settings, auth session persistence
 - **remote/dto/** - Supabase DTOs with kotlinx.serialization
 - **remote/** - SupabaseClientProvider.kt
-- **repository/** - NetworkBound repositories (server authority, Room cache)
+- **repository/** - NetworkBound repositories (server authority, Room cache), includes GeneralLedgerRepository (cash ledger entries), QrisRepository (Supabase Storage upload + restaurant QRIS metadata)
 
 ### Domain
 - **domain/model/**
@@ -29,13 +29,15 @@
     - Device.kt
     - Membership.kt
     - UserRole.kt
+    - LedgerType.kt (INITIAL_BALANCE, SALE, WITHDRAWAL, ADJUSTMENT)
+    - CashBalance.kt (ledger-based: initialBalance + totalSales - totalWithdrawals + totalAdjustments)
 
 ### Infrastructure
 - **sync/** - Immediate push, retry queue, reconciliation, conflict handling, RealtimeManager.kt (Supabase Realtime → Room upsert)
 - **session/** - SessionManager.kt (current user, role, restaurant context), PinHasher.kt
 - **printer/** - BluetoothPrinterManager.kt, EscPosReceiptBuilder.kt
 - **payment/** - PaymentGateway.kt interface, PaymentResult.kt
-- **util/** - CurrencyFormatter, DateTimeUtil, UuidGenerator, NetworkMonitor
+- **util/** - CurrencyFormatter, DateTimeUtil, UuidGenerator, NetworkMonitor, UnitConverter
 - **di/** - AppModule.kt, NetworkModule.kt, DataStoreModule.kt
 
 ### UI
@@ -54,7 +56,7 @@
 - **inventory/** - InventoryScreen.kt, InventoryViewModel.kt
 - **product/** - ProductListScreen, ProductFormScreen, CategoryListScreen, CategoryFormScreen, ProductManagementViewModel
 - **purchasing/** - VendorListScreen, VendorFormScreen, GoodsReceivingListScreen, GoodsReceivingFormScreen, PurchasingViewModel
-- **settings/** - SettingsScreen (entry points: Printer, SaldoAwal, User, Kategori, Vendor, Barang, QRIS), PrinterSettingsScreen, QrisSettingsScreen, UserManagementScreen, InitialBalanceSettingScreen
+- **settings/** - SettingsScreen + SettingsViewModel (conditional rendering: full settings for OWNER/SETTINGS-feature, logout-only for cashier without SETTINGS), PrinterSettingsScreen, QrisSettingsScreen, UserManagementScreen + UserManagementViewModel, InitialBalanceSettingScreen
 
 ## Build Files
 - [build.gradle.kts](build.gradle.kts) - Root project config
@@ -64,3 +66,8 @@
 
 ## Database
 - **app/schemas/** - Room schema export location
+- Room DB version: 15
+
+## Supabase Storage
+- Bucket: `qris-images` (public) — stores QRIS images at path `{restaurantId}/qris.jpg`
+- URL stored in `restaurants.qris_image_url` and cached in `QrisSettingsDataStore`

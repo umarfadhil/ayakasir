@@ -426,4 +426,3 @@ Box(modifier = Modifier.heightIn(max = 180.dp)) {
 - Let `supabase/schema.sql` `general_ledger.type` CHECK drift from `LedgerType` enum values (causes remote sync rejection)
 - Forget to set `restaurantId = sessionManager.currentRestaurantId` when creating new users via owner
 - Use `Column + verticalScroll` inside AlertDialog for long lists (use `Box(heightIn) + LazyColumn` instead)
-

@@ -10,3 +10,6 @@
 local.properties
 plan_output.md
 _ul
+/.claude
+/.vscode
+/ai-memory

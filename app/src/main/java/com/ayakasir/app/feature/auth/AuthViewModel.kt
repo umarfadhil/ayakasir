@@ -81,6 +81,16 @@ class AuthViewModel @Inject constructor(
                 if (user != null) {
                     val restaurantId = sessionManager.getPersistedRestaurantId()
                     sessionManager.loginPin(user, restaurantId)
+                    // Pull latest data in background (catches changes made while app was closed)
+                    if (!restaurantId.isNullOrEmpty()) {
+                        viewModelScope.launch {
+                            try {
+                                syncManager.pullAllFromSupabase(restaurantId)
+                            } catch (e: Exception) {
+                                Log.w("AuthViewModel", "PIN login pull failed: ${e.message}")
+                            }
+                        }
+                    }
                     _uiState.update {
                         it.copy(
                             isLoading = false,

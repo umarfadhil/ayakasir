@@ -16,6 +16,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.ayakasir.app.core.domain.model.CashBalance
 import com.ayakasir.app.core.util.CurrencyFormatter
+import kotlin.math.abs
 
 @Composable
 fun CashBalanceDetailDialog(
@@ -44,6 +45,29 @@ fun CashBalanceDetailDialog(
                     else
                         MaterialTheme.colorScheme.error
                 )
+
+                if (balance.totalQrisSales != 0L || balance.totalCogs != 0L) {
+                    HorizontalDivider()
+                    Text(
+                        text = "Info Tambahan",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    if (balance.totalQrisSales != 0L) {
+                        BalanceDetailRow(
+                            "Penjualan QRIS",
+                            balance.totalQrisSales,
+                            isPositive = true
+                        )
+                    }
+                    if (balance.totalCogs != 0L) {
+                        BalanceDetailRow(
+                            "HPP (Pembelian)",
+                            abs(balance.totalCogs),
+                            isNegative = true
+                        )
+                    }
+                }
             }
         },
         confirmButton = {

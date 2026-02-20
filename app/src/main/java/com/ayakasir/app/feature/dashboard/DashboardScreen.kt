@@ -10,16 +10,21 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -44,16 +49,20 @@ import com.ayakasir.app.core.util.DateTimeUtil
 fun DashboardScreen(
     viewModel: DashboardViewModel = hiltViewModel()
 ) {
-    val todayTotal by viewModel.todayTotal.collectAsStateWithLifecycle()
-    val todayCount by viewModel.todayCount.collectAsStateWithLifecycle()
-    val todayCash by viewModel.todayCash.collectAsStateWithLifecycle()
-    val todayQris by viewModel.todayQris.collectAsStateWithLifecycle()
+    val periodTotal by viewModel.periodTotal.collectAsStateWithLifecycle()
+    val periodCount by viewModel.periodCount.collectAsStateWithLifecycle()
+    val periodCash by viewModel.periodCash.collectAsStateWithLifecycle()
+    val periodQris by viewModel.periodQris.collectAsStateWithLifecycle()
     val lowStockCount by viewModel.lowStockCount.collectAsStateWithLifecycle()
     val lowStockItems by viewModel.lowStockItems.collectAsStateWithLifecycle()
-    val todaySales by viewModel.todaySales.collectAsStateWithLifecycle()
+    val periodSales by viewModel.periodSales.collectAsStateWithLifecycle()
+    val dateFilter by viewModel.dateFilter.collectAsStateWithLifecycle()
     val isRefreshing by viewModel.isRefreshing.collectAsStateWithLifecycle()
-    val productSummary = remember(todaySales) { buildProductSummary(todaySales) }
+    val productSummary = remember(periodSales) { buildProductSummary(periodSales) }
+    val periodLabel = remember(dateFilter) { dateFilterLabel(dateFilter) }
+    val salesTitle = remember(periodLabel) { "Penjualan $periodLabel" }
     var showLowStockDialog by remember { mutableStateOf(false) }
+    var showDatePicker by remember { mutableStateOf(false) }
     val configuration = LocalConfiguration.current
     val isCompact = configuration.screenWidthDp < 600
     val contentPadding = if (isCompact) 16.dp else 24.dp
@@ -64,115 +73,165 @@ fun DashboardScreen(
         onRefresh = { viewModel.refresh() },
         modifier = Modifier.fillMaxSize()
     ) {
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(contentPadding),
-        verticalArrangement = Arrangement.spacedBy(cardSpacing)
-    ) {
-        item {
-            Column {
-                Text(
-                    text = "Dashboard",
-                    style = MaterialTheme.typography.headlineMedium,
-                    fontWeight = FontWeight.Bold
-                )
-                Spacer(modifier = Modifier.height(24.dp))
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(contentPadding),
+            verticalArrangement = Arrangement.spacedBy(cardSpacing)
+        ) {
+            item {
+                Column {
+                    Text(
+                        text = "Dashboard",
+                        style = MaterialTheme.typography.headlineMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    DateFilterOptions(
+                        selectedOption = dateFilter.option,
+                        onSelectToday = { viewModel.selectDateOption(DashboardDateOption.TODAY) },
+                        onSelectMonth = { viewModel.selectDateOption(DashboardDateOption.THIS_MONTH) },
+                        onSelectYear = { viewModel.selectDateOption(DashboardDateOption.THIS_YEAR) },
+                        onSelectCustomDate = { showDatePicker = true }
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Periode: $periodLabel",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(20.dp))
 
-                if (isCompact) {
-                    Column(verticalArrangement = Arrangement.spacedBy(cardSpacing)) {
-                        StatCard(
-                            title = "Penjualan Hari Ini",
-                            value = CurrencyFormatter.format(todayTotal),
+                    if (isCompact) {
+                        Column(verticalArrangement = Arrangement.spacedBy(cardSpacing)) {
+                            StatCard(
+                                title = salesTitle,
+                                value = CurrencyFormatter.format(periodTotal),
+                                modifier = Modifier.fillMaxWidth(),
+                                contentPadding = 16.dp
+                            )
+                            StatCard(
+                                title = "Jumlah Transaksi",
+                                value = "$periodCount",
+                                modifier = Modifier.fillMaxWidth(),
+                                contentPadding = 16.dp
+                            )
+                        }
+                    } else {
+                        Row(
                             modifier = Modifier.fillMaxWidth(),
-                            contentPadding = 16.dp
-                        )
-                        StatCard(
-                            title = "Jumlah Transaksi",
-                            value = "$todayCount",
-                            modifier = Modifier.fillMaxWidth(),
-                            contentPadding = 16.dp
-                        )
+                            horizontalArrangement = Arrangement.spacedBy(cardSpacing)
+                        ) {
+                            StatCard(
+                                title = salesTitle,
+                                value = CurrencyFormatter.format(periodTotal),
+                                modifier = Modifier.weight(1f)
+                            )
+                            StatCard(
+                                title = "Jumlah Transaksi",
+                                value = "$periodCount",
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
                     }
-                } else {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(cardSpacing)
-                    ) {
-                        StatCard(
-                            title = "Penjualan Hari Ini",
-                            value = CurrencyFormatter.format(todayTotal),
-                            modifier = Modifier.weight(1f)
-                        )
-                        StatCard(
-                            title = "Jumlah Transaksi",
-                            value = "$todayCount",
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-                }
 
-                Spacer(modifier = Modifier.height(16.dp))
+                    Spacer(modifier = Modifier.height(16.dp))
 
-                if (isCompact) {
-                    Column(verticalArrangement = Arrangement.spacedBy(cardSpacing)) {
-                        StatCard(
-                            title = "Tunai",
-                            value = CurrencyFormatter.format(todayCash),
+                    if (isCompact) {
+                        Column(verticalArrangement = Arrangement.spacedBy(cardSpacing)) {
+                            StatCard(
+                                title = "Tunai",
+                                value = CurrencyFormatter.format(periodCash),
+                                modifier = Modifier.fillMaxWidth(),
+                                contentPadding = 16.dp
+                            )
+                            StatCard(
+                                title = "QRIS",
+                                value = CurrencyFormatter.format(periodQris),
+                                modifier = Modifier.fillMaxWidth(),
+                                contentPadding = 16.dp
+                            )
+                            StatCard(
+                                title = "Stok Rendah",
+                                value = "$lowStockCount item",
+                                modifier = Modifier.fillMaxWidth(),
+                                isAlert = lowStockCount > 0,
+                                onClick = { showLowStockDialog = true },
+                                contentPadding = 16.dp
+                            )
+                        }
+                    } else {
+                        Row(
                             modifier = Modifier.fillMaxWidth(),
-                            contentPadding = 16.dp
-                        )
-                        StatCard(
-                            title = "QRIS",
-                            value = CurrencyFormatter.format(todayQris),
-                            modifier = Modifier.fillMaxWidth(),
-                            contentPadding = 16.dp
-                        )
-                        StatCard(
-                            title = "Stok Rendah",
-                            value = "$lowStockCount item",
-                            modifier = Modifier.fillMaxWidth(),
-                            isAlert = lowStockCount > 0,
-                            onClick = { showLowStockDialog = true },
-                            contentPadding = 16.dp
-                        )
-                    }
-                } else {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(cardSpacing)
-                    ) {
-                        StatCard(
-                            title = "Tunai",
-                            value = CurrencyFormatter.format(todayCash),
-                            modifier = Modifier.weight(1f)
-                        )
-                        StatCard(
-                            title = "QRIS",
-                            value = CurrencyFormatter.format(todayQris),
-                            modifier = Modifier.weight(1f)
-                        )
-                        StatCard(
-                            title = "Stok Rendah",
-                            value = "$lowStockCount item",
-                            modifier = Modifier.weight(1f),
-                            isAlert = lowStockCount > 0,
-                            onClick = { showLowStockDialog = true }
-                        )
+                            horizontalArrangement = Arrangement.spacedBy(cardSpacing)
+                        ) {
+                            StatCard(
+                                title = "Tunai",
+                                value = CurrencyFormatter.format(periodCash),
+                                modifier = Modifier.weight(1f)
+                            )
+                            StatCard(
+                                title = "QRIS",
+                                value = CurrencyFormatter.format(periodQris),
+                                modifier = Modifier.weight(1f)
+                            )
+                            StatCard(
+                                title = "Stok Rendah",
+                                value = "$lowStockCount item",
+                                modifier = Modifier.weight(1f),
+                                isAlert = lowStockCount > 0,
+                                onClick = { showLowStockDialog = true }
+                            )
+                        }
                     }
                 }
             }
-        }
 
-        item {
-            SalesSummaryCard(transactions = todaySales)
-        }
+            item {
+                SalesSummaryCard(
+                    transactions = periodSales,
+                    periodLabel = periodLabel
+                )
+            }
 
-        item {
-            ProductSummaryCard(summary = productSummary)
+            item {
+                ProductSummaryCard(
+                    summary = productSummary,
+                    periodLabel = periodLabel
+                )
+            }
+        }
+    } // PullToRefreshBox
+
+    if (showDatePicker) {
+        val initialDateMillis = if (dateFilter.option == DashboardDateOption.CUSTOM_DATE) {
+            dateFilter.selectedDateMillis
+        } else {
+            DateTimeUtil.now()
+        }
+        val datePickerState = rememberDatePickerState(initialSelectedDateMillis = initialDateMillis)
+        DatePickerDialog(
+            onDismissRequest = { showDatePicker = false },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val selectedDate = datePickerState.selectedDateMillis ?: initialDateMillis
+                        viewModel.selectCustomDate(selectedDate)
+                        showDatePicker = false
+                    }
+                ) {
+                    Text("Pilih")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDatePicker = false }) {
+                    Text("Batal")
+                }
+            }
+        ) {
+            DatePicker(state = datePickerState)
         }
     }
-    } // PullToRefreshBox
 
     if (showLowStockDialog) {
         LowStockDialog(
@@ -180,6 +239,55 @@ fun DashboardScreen(
             onDismiss = { showLowStockDialog = false }
         )
     }
+}
+
+@Composable
+private fun DateFilterOptions(
+    selectedOption: DashboardDateOption,
+    onSelectToday: () -> Unit,
+    onSelectMonth: () -> Unit,
+    onSelectYear: () -> Unit,
+    onSelectCustomDate: () -> Unit
+) {
+    LazyRow(
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        item {
+            FilterChip(
+                selected = selectedOption == DashboardDateOption.TODAY,
+                onClick = onSelectToday,
+                label = { Text("Hari ini") }
+            )
+        }
+        item {
+            FilterChip(
+                selected = selectedOption == DashboardDateOption.THIS_MONTH,
+                onClick = onSelectMonth,
+                label = { Text("Bulan ini") }
+            )
+        }
+        item {
+            FilterChip(
+                selected = selectedOption == DashboardDateOption.THIS_YEAR,
+                onClick = onSelectYear,
+                label = { Text("Tahun ini") }
+            )
+        }
+        item {
+            FilterChip(
+                selected = selectedOption == DashboardDateOption.CUSTOM_DATE,
+                onClick = onSelectCustomDate,
+                label = { Text("Pilih tanggal") }
+            )
+        }
+    }
+}
+
+private fun dateFilterLabel(filter: DashboardDateFilter): String = when (filter.option) {
+    DashboardDateOption.TODAY -> "Hari ini"
+    DashboardDateOption.THIS_MONTH -> "Bulan ini"
+    DashboardDateOption.THIS_YEAR -> "Tahun ini"
+    DashboardDateOption.CUSTOM_DATE -> DateTimeUtil.formatDate(filter.selectedDateMillis)
 }
 
 @Composable
@@ -236,6 +344,7 @@ private fun StatCard(
 @Composable
 private fun SalesSummaryCard(
     transactions: List<Transaction>,
+    periodLabel: String,
     modifier: Modifier = Modifier
 ) {
     Card(
@@ -252,7 +361,7 @@ private fun SalesSummaryCard(
 
             if (transactions.isEmpty()) {
                 Text(
-                    text = "Belum ada penjualan hari ini",
+                    text = "Belum ada penjualan untuk $periodLabel",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -464,6 +573,7 @@ private fun buildProductSummary(transactions: List<Transaction>): List<ProductSu
 @Composable
 private fun ProductSummaryCard(
     summary: List<ProductSummaryRow>,
+    periodLabel: String,
     modifier: Modifier = Modifier
 ) {
     Card(
@@ -480,7 +590,7 @@ private fun ProductSummaryCard(
 
             if (summary.isEmpty()) {
                 Text(
-                    text = "Belum ada penjualan hari ini",
+                    text = "Belum ada penjualan untuk $periodLabel",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
@@ -133,6 +134,35 @@ fun PosScreen(
                 ) {
                     Text("Belum ada produk", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
+            } else if (uiState.selectedCategoryId == null) {
+                val productsByCategory = remember(products) { products.groupBy { it.categoryId } }
+                LazyVerticalGrid(
+                    columns = GridCells.Adaptive(minSize = 140.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    categories.forEach { category ->
+                        val categoryProducts = productsByCategory[category.id].orEmpty()
+                        if (categoryProducts.isNotEmpty()) {
+                            item(span = { GridItemSpan(maxLineSpan) }) {
+                                Text(
+                                    text = category.name,
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(top = 12.dp, bottom = 4.dp)
+                                )
+                            }
+                            items(categoryProducts, key = { it.id }) { product ->
+                                ProductCard(
+                                    product = product,
+                                    onClick = { viewModel.onProductClick(product) }
+                                )
+                            }
+                        }
+                    }
+                }
             } else {
                 LazyVerticalGrid(
                     columns = GridCells.Adaptive(minSize = 140.dp),
@@ -214,7 +244,7 @@ fun PosScreen(
                     modifier = Modifier.weight(1f)
                 ) { Text("Hapus") }
                 Button(
-                    onClick = { viewModel.checkout(PaymentMethod.CASH) },
+                    onClick = { viewModel.showCashPaymentConfirmation() },
                     enabled = uiState.cart.isNotEmpty() && !uiState.isProcessing,
                     modifier = Modifier.weight(1f)
                 ) { Text("Bayar Tunai") }
@@ -311,6 +341,32 @@ fun PosScreen(
             onWithdraw = { amount, reason ->
                 viewModel.showWithdrawalConfirmation(amount, reason)
             }
+        )
+    }
+
+    // Cash payment confirmation dialog
+    if (uiState.showCashConfirmation) {
+        ConfirmDialog(
+            title = "Konfirmasi Pembayaran Tunai",
+            message = "Proses pembayaran tunai sebesar ${CurrencyFormatter.format(uiState.cartTotal)}?",
+            confirmText = "Ya, Bayar",
+            dismissText = "Batal",
+            onConfirm = {
+                viewModel.dismissCashConfirmation()
+                viewModel.checkout(PaymentMethod.CASH)
+            },
+            onDismiss = { viewModel.dismissCashConfirmation() }
+        )
+    }
+
+    if (uiState.showPrintReceiptConfirmation) {
+        ConfirmDialog(
+            title = "Cetak Struk",
+            message = "Transaksi berhasil. Cetak struk sekarang?",
+            confirmText = "Cetak",
+            dismissText = "Tidak",
+            onConfirm = { viewModel.confirmPrintReceipt() },
+            onDismiss = { viewModel.dismissPrintReceiptConfirmation() }
         )
     }
 

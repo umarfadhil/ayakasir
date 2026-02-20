@@ -7,13 +7,13 @@
 - UI/UX: Responsive interface that adapts to different device types and screen sizes (phone and tablet).
 
 ## Core Features
-- **POS:** Point of sale with transaction management
+- **POS:** Point of sale with transaction management + post-payment print confirmation dialog (`Cetak struk?`) for CASH and QRIS transactions
 - **Inventory:** Stock tracking with product components
 - **Purchasing:** Vendor management & goods receiving
-- **Products:** Menu/raw materials with categories & variants
-- **Cash Management:** General ledger-based balance tracking, initial balance, withdrawals, adjustments
-- **Reporting:** Dashboard with sales analytics
-- **Settings:** Printer (Bluetooth), QRIS placeholder, users
+- **Products:** Menu/raw materials with categories & variants, plus menu management helpers (grouped list by category, title search, clone item)
+- **Cash Management:** General ledger-based balance tracking, initial balance, withdrawals, adjustments. QRIS sales and COGS (goods receiving) recorded in ledger but excluded from Saldo Kas calculation.
+- **Reporting:** Dashboard with sales analytics and period filters (`Hari ini`, `Bulan ini`, `Tahun ini`, `Pilih tanggal`)
+- **Settings:** Printer (Bluetooth + WiFi TCP), QRIS, users, owner-only `Unduh Data` CSV export (general ledger with item references)
 
 ## Architecture Stack
 - **Pattern:** MVVM (ViewModel + StateFlow + UiState)
@@ -37,7 +37,7 @@
   - Secondary: 6-digit PIN for fast device unlock (app close/minimize only, session persisted via DataStore).
   - Registration: Both `restaurants` and `users` tables default `is_active = false`. Requires admin activation.
   - No dependency on Supabase Auth module — password and PIN both validated locally against hashes in `users` table.
-- Printer: 58mm ESC/POS Bluetooth
+- Printer: 58mm ESC/POS via Bluetooth SPP and WiFi TCP (default port 9100)
 - Unit Conversion:
   - Inventory stores quantities in base units: g (mass), mL (volume), pcs (count).
   - Purchasing normalizes input to base unit at storage time (1 kg → 1000 g).
@@ -49,12 +49,13 @@
   - Sync state uses enum:
     { PENDING, SYNCING, SYNCED, FAILED, CONFLICT }.
 - Offline & Sync:
-  - **Realtime:** Supabase Realtime (Postgres Changes) subscribes to all 12 tenant tables via WebSocket → upserts to Room → Room Flow auto-emits to UI. Connected on login, disconnected on logout.
+  - **Realtime:** Supabase Realtime (Postgres Changes) subscribes to all 12 tenant tables + `restaurants` table (13 listeners total) via WebSocket → upserts to Room → Room Flow auto-emits to UI. Connected on login, disconnected on logout. The `restaurants` listener also updates `QrisSettingsDataStore` on change.
   - **Pull-to-refresh:** All data screens (POS, Dashboard, Inventory, Products, Categories, Vendors, Goods Receiving) support swipe-to-refresh via Material3 PullToRefreshBox. Triggers `SyncManager.pullAllFromSupabase()`.
   - Every write attempts immediate server push.
   - On failure → enqueue to SyncQueue.
   - WorkManager handles retry & reconciliation (push + pull every 15 min).
-  - On email/password login → immediate full pull from Supabase for cross-device sync.
+  - On email/password login → immediate full pull (blocking) from Supabase for cross-device sync.
+  - On PIN unlock → background full pull from Supabase (non-blocking, catches changes made while app was closed).
 - Conflict Resolution:
   - Server is the source of truth by default.
 

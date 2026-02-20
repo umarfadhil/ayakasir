@@ -1,8 +1,10 @@
 package com.ayakasir.app.feature.product
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.ayakasir.app.core.data.repository.CategoryRepository
+import com.ayakasir.app.core.data.repository.InventoryRepository
 import com.ayakasir.app.core.data.repository.ProductComponentRepository
 import com.ayakasir.app.core.data.repository.ProductRepository
 import com.ayakasir.app.core.domain.model.Category
@@ -18,6 +20,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -28,9 +31,13 @@ class ProductManagementViewModel @Inject constructor(
     private val productRepository: ProductRepository,
     private val categoryRepository: CategoryRepository,
     private val productComponentRepository: ProductComponentRepository,
+    private val inventoryRepository: InventoryRepository,
     private val syncManager: SyncManager,
     private val sessionManager: SessionManager
 ) : ViewModel() {
+    companion object {
+        private const val TAG = "ProductManagementVM"
+    }
 
     private val _isRefreshing = MutableStateFlow(false)
     val isRefreshing: StateFlow<Boolean> = _isRefreshing.asStateFlow()
@@ -81,6 +88,11 @@ class ProductManagementViewModel @Inject constructor(
 
     val rawMaterialCategories: StateFlow<List<Category>> = categoryRepository.getRawMaterialCategories()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    /** Maps productId → base unit (e.g. "g", "mL", "pcs") from inventory. */
+    val rawMaterialUnitMap: StateFlow<Map<String, String>> = inventoryRepository.getAllInventory()
+        .map { items -> items.associate { it.productId to it.unit } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
 
     private val _productForm = MutableStateFlow(ProductFormState())
     val productForm: StateFlow<ProductFormState> = _productForm.asStateFlow()
@@ -182,6 +194,21 @@ class ProductManagementViewModel @Inject constructor(
         }
     }
 
+    /** Called when the user picks a different raw material product for a component row.
+     *  Auto-fills the unit from inventory and resets variantId. */
+    fun onComponentProductSelected(index: Int, productId: String) {
+        val unit = rawMaterialUnitMap.value[productId] ?: "pcs"
+        _productForm.update {
+            val updated = it.components.toMutableList()
+            updated[index] = updated[index].copy(
+                productId = productId,
+                variantId = "",
+                unit = unit
+            )
+            it.copy(components = updated)
+        }
+    }
+
     fun saveProduct(existingId: String?) {
         val form = _productForm.value
         if (form.name.isBlank() || form.price.isBlank()) {
@@ -232,6 +259,37 @@ class ProductManagementViewModel @Inject constructor(
         }
     }
 
+    fun cloneProduct(productId: String) {
+        viewModelScope.launch {
+            try {
+                val source = productRepository.getProductById(productId) ?: return@launch
+                val sourceComponents = productComponentRepository.getComponentsByProductId(productId).first()
+
+                val copiedProduct = productRepository.createProduct(
+                    name = generateCopyName(source.name),
+                    categoryId = source.categoryId.ifBlank { null },
+                    description = source.description,
+                    price = source.price,
+                    imagePath = source.imagePath,
+                    variantNames = source.variants.map { it.name to it.priceAdjustment },
+                    productType = source.productType
+                )
+
+                sourceComponents.forEach { component ->
+                    productComponentRepository.addComponent(
+                        parentProductId = copiedProduct.id,
+                        componentProductId = component.componentProductId,
+                        componentVariantId = component.componentVariantId,
+                        requiredQty = component.requiredQty,
+                        unit = component.unit
+                    )
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to clone product: ${e.message}")
+            }
+        }
+    }
+
     fun onCategoryNameChange(value: String) { _categoryForm.update { it.copy(name = value) } }
     fun onCategorySortOrderChange(value: String) { _categoryForm.update { it.copy(sortOrder = value) } }
     fun onCategoryTypeChange(type: CategoryType) { _categoryForm.update { it.copy(categoryType = type) } }
@@ -277,6 +335,22 @@ class ProductManagementViewModel @Inject constructor(
             } finally {
                 _isRefreshing.value = false
             }
+        }
+    }
+
+    private fun generateCopyName(originalName: String): String {
+        val normalizedExistingNames = products.value
+            .map { it.name.trim().lowercase() }
+            .toSet()
+
+        val baseName = "$originalName (Copy)"
+        if (baseName.trim().lowercase() !in normalizedExistingNames) return baseName
+
+        var index = 2
+        while (true) {
+            val candidate = "$originalName (Copy $index)"
+            if (candidate.trim().lowercase() !in normalizedExistingNames) return candidate
+            index++
         }
     }
 }

@@ -87,4 +87,25 @@ class GeneralLedgerRepository @Inject constructor(
 
         return id
     }
+
+    suspend fun deleteByReferenceId(referenceId: String, type: LedgerType) {
+        val entries = generalLedgerDao.getByReferenceIdAndType(referenceId, type.name)
+        entries.forEach { entry ->
+            generalLedgerDao.deleteById(entry.id)
+            try {
+                syncManager.pushToSupabase("general_ledger", "DELETE", entry.id)
+            } catch (e: Exception) {
+                Log.w(TAG, "Push delete general_ledger failed: ${e.message}")
+                syncQueueDao.enqueue(
+                    SyncQueueEntity(
+                        tableName = "general_ledger",
+                        recordId = entry.id,
+                        operation = "DELETE",
+                        payload = "{\"id\":\"${entry.id}\"}"
+                    )
+                )
+                syncScheduler.requestImmediateSync()
+            }
+        }
+    }
 }

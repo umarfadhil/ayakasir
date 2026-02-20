@@ -15,12 +15,12 @@
 ### Data Layer
 - **local/entity/** - Room entities (16+ tables): User, Product, Category, Variant, Transaction, GeneralLedger, SyncQueue, etc.
 - **local/dao/** - Room DAOs with Flow<List<T>> queries (includes GeneralLedgerDao)
-- **local/relation/** - Room relations: ProductWithVariants, TransactionWithItems, etc.
+- **local/relation/** - Room relations/projections: ProductWithVariants, TransactionWithItems, GoodsReceivingItemWithProduct, GeneralLedgerExportRow, etc.
 - **local/converter/** - Room type converters
 - **local/datastore/** - DataStore for cash balance, QRIS settings, auth session persistence
 - **remote/dto/** - Supabase DTOs with kotlinx.serialization
 - **remote/** - SupabaseClientProvider.kt
-- **repository/** - NetworkBound repositories (server authority, Room cache), includes GeneralLedgerRepository (cash ledger entries), QrisRepository (Supabase Storage upload + restaurant QRIS metadata)
+- **repository/** - NetworkBound repositories (server authority, Room cache), includes GeneralLedgerRepository (cash ledger entries), LedgerExportRepository (tenant-scoped general ledger CSV export), QrisRepository (Supabase Storage upload + restaurant QRIS metadata)
 
 ### Domain
 - **domain/model/**
@@ -29,13 +29,13 @@
     - Device.kt
     - Membership.kt
     - UserRole.kt
-    - LedgerType.kt (INITIAL_BALANCE, SALE, WITHDRAWAL, ADJUSTMENT)
-    - CashBalance.kt (ledger-based: initialBalance + totalSales - totalWithdrawals + totalAdjustments)
+    - LedgerType.kt (INITIAL_BALANCE, SALE, SALE_QRIS, WITHDRAWAL, ADJUSTMENT, COGS)
+    - CashBalance.kt (ledger-based: cash-affecting types only for Saldo Kas + non-cash types for info display)
 
 ### Infrastructure
 - **sync/** - Immediate push, retry queue, reconciliation, conflict handling, RealtimeManager.kt (Supabase Realtime → Room upsert)
 - **session/** - SessionManager.kt (current user, role, restaurant context), PinHasher.kt
-- **printer/** - BluetoothPrinterManager.kt, EscPosReceiptBuilder.kt
+- **printer/** - BluetoothPrinterManager.kt (Bluetooth + WiFi TCP connection + persisted saved target), EscPosReceiptBuilder.kt (required sales receipt format), PrinterConnectionType.kt
 - **payment/** - PaymentGateway.kt interface, PaymentResult.kt
 - **util/** - CurrencyFormatter, DateTimeUtil, UuidGenerator, NetworkMonitor, UnitConverter
 - **di/** - AppModule.kt, NetworkModule.kt, DataStoreModule.kt
@@ -51,12 +51,12 @@
     ├── LoginScreen.kt (PIN unlock for app resume)
     ├── RegistrationScreen.kt + RegistrationViewModel.kt
     └── AuthViewModel.kt (handles both email/password + PIN auth)
-- **pos/** - PosScreen.kt, PosViewModel.kt
-- **dashboard/** - DashboardScreen.kt, DashboardViewModel.kt
+- **pos/** - PosScreen.kt, PosViewModel.kt (post-payment `Cetak Struk` confirmation and direct print dispatch)
+- **dashboard/** - DashboardScreen.kt, DashboardViewModel.kt (sales dashboard with selectable period chips: hari ini, bulan ini, tahun ini, custom date picker)
 - **inventory/** - InventoryScreen.kt, InventoryViewModel.kt
-- **product/** - ProductListScreen, ProductFormScreen, CategoryListScreen, CategoryFormScreen, ProductManagementViewModel
+- **product/** - ProductListScreen (menu-only list, grouped by category, top-right search toggle, per-item clone/delete), ProductFormScreen, CategoryListScreen, CategoryFormScreen, ProductManagementViewModel
 - **purchasing/** - VendorListScreen, VendorFormScreen, GoodsReceivingListScreen, GoodsReceivingFormScreen, PurchasingViewModel
-- **settings/** - SettingsScreen + SettingsViewModel (conditional rendering: full settings for OWNER/SETTINGS-feature, logout-only for cashier without SETTINGS), PrinterSettingsScreen, QrisSettingsScreen, UserManagementScreen + UserManagementViewModel, InitialBalanceSettingScreen
+- **settings/** - SettingsScreen + SettingsViewModel (conditional rendering: full settings for OWNER/SETTINGS-feature, logout-only for cashier without SETTINGS, owner-only `Unduh Data` CSV export action), PrinterSettingsScreen + PrinterSettingsViewModel (Bluetooth/WiFi connect + test print), QrisSettingsScreen, UserManagementScreen + UserManagementViewModel, InitialBalanceSettingScreen
 
 ## Build Files
 - [build.gradle.kts](build.gradle.kts) - Root project config
@@ -67,6 +67,10 @@
 ## Database
 - **app/schemas/** - Room schema export location
 - Room DB version: 15
+
+## Supabase Schema
+- [schema.sql](supabase/schema.sql) - Canonical remote schema for fresh setup; `general_ledger.type` CHECK includes `INITIAL_BALANCE`, `SALE`, `SALE_QRIS`, `WITHDRAWAL`, `ADJUSTMENT`, `COGS`
+- [migration_general_ledger_type_constraint.sql](supabase/migration_general_ledger_type_constraint.sql) - One-time migration for existing projects to expand `general_ledger.type` CHECK constraint
 
 ## Supabase Storage
 - Bucket: `qris-images` (public) — stores QRIS images at path `{restaurantId}/qris.jpg`

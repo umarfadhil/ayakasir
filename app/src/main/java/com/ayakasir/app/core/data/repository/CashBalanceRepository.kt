@@ -17,7 +17,7 @@ class CashBalanceRepository @Inject constructor(
      * Balance is computed entirely from the general_ledger table.
      */
     fun getCurrentBalance(): Flow<CashBalance> {
-        return combine(
+        val cashFlows = combine(
             generalLedgerRepository.getTotalByType(LedgerType.INITIAL_BALANCE),
             generalLedgerRepository.getTotalByType(LedgerType.SALE),
             generalLedgerRepository.getTotalByType(LedgerType.WITHDRAWAL),
@@ -31,6 +31,14 @@ class CashBalanceRepository @Inject constructor(
                 totalAdjustments = adjustments,
                 currentBalance = currentBalance
             )
+        }
+
+        return combine(
+            cashFlows,
+            generalLedgerRepository.getTotalByType(LedgerType.SALE_QRIS),
+            generalLedgerRepository.getTotalByType(LedgerType.COGS)
+        ) { base, qrisSales, cogs ->
+            base.copy(totalQrisSales = qrisSales, totalCogs = cogs)
         }
     }
 

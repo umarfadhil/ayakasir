@@ -6,6 +6,7 @@ import com.ayakasir.app.core.data.repository.CashBalanceRepository
 import com.ayakasir.app.core.data.repository.CashWithdrawalRepository
 import com.ayakasir.app.core.data.repository.CategoryRepository
 import com.ayakasir.app.core.data.repository.ProductRepository
+import com.ayakasir.app.core.data.repository.RestaurantRepository
 import com.ayakasir.app.core.data.repository.TransactionRepository
 import com.ayakasir.app.core.data.local.datastore.QrisSettingsDataStore
 import com.ayakasir.app.core.domain.model.CartItem
@@ -17,9 +18,12 @@ import com.ayakasir.app.core.domain.model.Product
 import com.ayakasir.app.core.domain.model.Variant
 import com.ayakasir.app.core.payment.PaymentGateway
 import com.ayakasir.app.core.payment.PaymentResult
+import com.ayakasir.app.core.printer.BluetoothPrinterManager
+import com.ayakasir.app.core.printer.EscPosReceiptBuilder
 import com.ayakasir.app.core.session.SessionManager
 import com.ayakasir.app.core.sync.SyncManager
 import com.ayakasir.app.core.util.CurrencyFormatter
+import com.ayakasir.app.core.util.DateTimeUtil
 import com.ayakasir.app.core.util.UuidGenerator
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -38,12 +42,14 @@ class PosViewModel @Inject constructor(
     private val categoryRepository: CategoryRepository,
     private val productRepository: ProductRepository,
     private val transactionRepository: TransactionRepository,
+    private val restaurantRepository: RestaurantRepository,
     private val cashWithdrawalRepository: CashWithdrawalRepository,
     private val cashBalanceRepository: CashBalanceRepository,
     private val sessionManager: SessionManager,
     private val syncManager: SyncManager,
     private val paymentGateway: PaymentGateway,
-    private val qrisSettingsDataStore: QrisSettingsDataStore
+    private val qrisSettingsDataStore: QrisSettingsDataStore,
+    private val printerManager: BluetoothPrinterManager
 ) : ViewModel() {
 
     data class PendingWithdrawal(val amount: Long, val reason: String)
@@ -58,6 +64,14 @@ class PosViewModel @Inject constructor(
         val expiresAt: Long?
     )
 
+    data class PendingPrintReceipt(
+        val transactionId: String,
+        val paymentMethod: PaymentMethod,
+        val items: List<CartItem>,
+        val total: Long,
+        val printedAt: Long
+    )
+
     data class PosUiState(
         val categories: List<Category> = emptyList(),
         val products: List<Product> = emptyList(),
@@ -68,12 +82,15 @@ class PosViewModel @Inject constructor(
         val checkoutSuccess: Boolean = false,
         val isProcessing: Boolean = false,
         val error: String? = null,
+        val showCashConfirmation: Boolean = false,
         val showCashWithdrawalDialog: Boolean = false,
         val showWithdrawalConfirmation: Boolean = false,
         val pendingWithdrawal: PendingWithdrawal? = null,
         val withdrawalSuccess: Boolean = false,
         val showBalanceDetail: Boolean = false,
-        val qrisPayment: QrisPaymentState? = null
+        val qrisPayment: QrisPaymentState? = null,
+        val pendingPrintReceipt: PendingPrintReceipt? = null,
+        val showPrintReceiptConfirmation: Boolean = false
     ) {
         val cartTotal: Long get() = cart.sumOf { it.subtotal }
         val cartItemCount: Int get() = cart.sumOf { it.qty }
@@ -223,16 +240,13 @@ class PosViewModel @Inject constructor(
         viewModelScope.launch {
             _uiState.update { it.copy(isProcessing = true, error = null) }
             try {
-                createTransaction(userId, state.cart, paymentMethod, state.cartTotal)
-                _uiState.update {
-                    it.copy(
-                        cart = emptyList(),
-                        isProcessing = false,
-                        checkoutSuccess = true,
-                        showCheckout = false,
-                        qrisPayment = null
-                    )
-                }
+                val transactionId = createTransaction(userId, state.cart, paymentMethod, state.cartTotal)
+                markTransactionSuccess(
+                    transactionId = transactionId,
+                    paymentMethod = paymentMethod,
+                    items = state.cart,
+                    total = state.cartTotal
+                )
             } catch (e: Exception) {
                 _uiState.update { it.copy(isProcessing = false, error = "Gagal memproses transaksi") }
             }
@@ -274,16 +288,18 @@ class PosViewModel @Inject constructor(
                 is PaymentResult.Success -> {
                     try {
                         val userId = sessionManager.currentUser.value?.id ?: return@launch
-                        createTransaction(userId, state.cart, PaymentMethod.QRIS, state.cartTotal)
-                        _uiState.update {
-                            it.copy(
-                                cart = emptyList(),
-                                isProcessing = false,
-                                checkoutSuccess = true,
-                                showCheckout = false,
-                                qrisPayment = null
-                            )
-                        }
+                        val transactionId = createTransaction(
+                            userId,
+                            state.cart,
+                            PaymentMethod.QRIS,
+                            state.cartTotal
+                        )
+                        markTransactionSuccess(
+                            transactionId = transactionId,
+                            paymentMethod = PaymentMethod.QRIS,
+                            items = state.cart,
+                            total = state.cartTotal
+                        )
                     } catch (e: Exception) {
                         _uiState.update { it.copy(isProcessing = false, error = "Gagal memproses transaksi") }
                     }
@@ -311,16 +327,18 @@ class PosViewModel @Inject constructor(
         viewModelScope.launch {
             _uiState.update { it.copy(isProcessing = true, error = null) }
             try {
-                createTransaction(userId, payment.cartItems, PaymentMethod.QRIS, payment.amount)
-                _uiState.update {
-                    it.copy(
-                        cart = emptyList(),
-                        isProcessing = false,
-                        checkoutSuccess = true,
-                        showCheckout = false,
-                        qrisPayment = null
-                    )
-                }
+                val transactionId = createTransaction(
+                    userId,
+                    payment.cartItems,
+                    PaymentMethod.QRIS,
+                    payment.amount
+                )
+                markTransactionSuccess(
+                    transactionId = transactionId,
+                    paymentMethod = PaymentMethod.QRIS,
+                    items = payment.cartItems,
+                    total = payment.amount
+                )
             } catch (e: Exception) {
                 _uiState.update { it.copy(isProcessing = false, error = "Gagal memproses transaksi") }
             }
@@ -329,6 +347,30 @@ class PosViewModel @Inject constructor(
 
     fun dismissSuccessMessage() {
         _uiState.update { it.copy(checkoutSuccess = false) }
+    }
+
+    fun dismissPrintReceiptConfirmation() {
+        _uiState.update {
+            it.copy(
+                showPrintReceiptConfirmation = false,
+                pendingPrintReceipt = null
+            )
+        }
+    }
+
+    fun confirmPrintReceipt() {
+        val receipt = _uiState.value.pendingPrintReceipt ?: return
+
+        viewModelScope.launch {
+            _uiState.update { it.copy(showPrintReceiptConfirmation = false, error = null) }
+            val printed = printReceipt(receipt)
+            _uiState.update {
+                it.copy(
+                    pendingPrintReceipt = null,
+                    error = if (printed) null else "Gagal mencetak struk. Cek koneksi printer di Pengaturan."
+                )
+            }
+        }
     }
 
     // Cash withdrawal methods
@@ -363,6 +405,14 @@ class PosViewModel @Inject constructor(
                 }
             }
         }
+    }
+
+    fun showCashPaymentConfirmation() {
+        _uiState.update { it.copy(showCashConfirmation = true) }
+    }
+
+    fun dismissCashConfirmation() {
+        _uiState.update { it.copy(showCashConfirmation = false) }
     }
 
     fun dismissWithdrawalConfirmation() {
@@ -418,9 +468,66 @@ class PosViewModel @Inject constructor(
         _uiState.update { it.copy(showBalanceDetail = false) }
     }
 
+    private fun markTransactionSuccess(
+        transactionId: String,
+        paymentMethod: PaymentMethod,
+        items: List<CartItem>,
+        total: Long
+    ) {
+        _uiState.update {
+            it.copy(
+                cart = emptyList(),
+                isProcessing = false,
+                checkoutSuccess = true,
+                showCheckout = false,
+                qrisPayment = null,
+                pendingPrintReceipt = PendingPrintReceipt(
+                    transactionId = transactionId,
+                    paymentMethod = paymentMethod,
+                    items = items,
+                    total = total,
+                    printedAt = System.currentTimeMillis()
+                ),
+                showPrintReceiptConfirmation = true
+            )
+        }
+    }
+
+    private suspend fun printReceipt(receipt: PendingPrintReceipt): Boolean {
+        val restaurantName = resolveRestaurantName()
+        val cashierName = sessionManager.currentUser.value?.name.orEmpty()
+        val receiptData = EscPosReceiptBuilder().buildReceipt(
+            storeName = restaurantName,
+            cashierName = cashierName,
+            transactionId = receipt.transactionId,
+            dateTime = DateTimeUtil.formatDateTime(receipt.printedAt),
+            items = receipt.items.map { item ->
+                EscPosReceiptBuilder.ReceiptItem(
+                    name = if (item.variantName.isNullOrBlank()) {
+                        item.productName
+                    } else {
+                        "${item.productName} (${item.variantName})"
+                    },
+                    qty = item.qty,
+                    unitPrice = item.unitPrice,
+                    subtotal = item.subtotal
+                )
+            },
+            total = receipt.total,
+            paymentMethod = receipt.paymentMethod.name
+        )
+        return printerManager.print(receiptData)
+    }
+
+    private suspend fun resolveRestaurantName(): String {
+        val restaurantId = sessionManager.currentRestaurantId ?: return "AyaKa\$ir"
+        val restaurant = restaurantRepository.getById(restaurantId) ?: return "AyaKa\$ir"
+        return restaurant.name.ifBlank { "AyaKa\$ir" }
+    }
+
     private fun isCheckoutLocked(): Boolean {
         val state = _uiState.value
-        return state.isProcessing || state.qrisPayment != null
+        return state.isProcessing || state.qrisPayment != null || state.showPrintReceiptConfirmation
     }
 
     private suspend fun createTransaction(
@@ -428,8 +535,8 @@ class PosViewModel @Inject constructor(
         cartItems: List<CartItem>,
         paymentMethod: PaymentMethod,
         total: Long
-    ) {
-        transactionRepository.createTransaction(
+    ): String {
+        return transactionRepository.createTransaction(
             userId = userId,
             cartItems = cartItems,
             paymentMethod = paymentMethod,

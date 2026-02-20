@@ -30,7 +30,10 @@
       "mcp__claude_ai_Supabase__get_project_url",
       "mcp__claude_ai_Supabase__get_publishable_keys",
       "mcp__claude_ai_Supabase__get_advisors",
-      "Bash(xxd:*)"
+      "Bash(xxd:*)",
+      "Bash(\"c:/Users/Umar Fadhil:*)",
+      "Bash(./gradlew clean:*)",
+      "Bash(ls:*)"
     ]
   }
 }

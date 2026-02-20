@@ -58,6 +58,7 @@ fun ProductFormScreen(
     val form by viewModel.productForm.collectAsStateWithLifecycle()
     val allCategories by viewModel.categories.collectAsStateWithLifecycle()
     val allProducts by viewModel.products.collectAsStateWithLifecycle()
+    val rawMaterialUnitMap by viewModel.rawMaterialUnitMap.collectAsStateWithLifecycle()
     var showCategoryDialog by remember { mutableStateOf(false) }
 
     // Filter categories based on selected product type
@@ -70,7 +71,7 @@ fun ProductFormScreen(
         }
     }
 
-    // Filter products for components - only show raw materials
+    // All raw material products (used as the base list for component dropdowns)
     val rawMaterialProducts = remember(allProducts) {
         allProducts.filter { it.productType == ProductType.RAW_MATERIAL }
     }
@@ -197,12 +198,20 @@ fun ProductFormScreen(
             // Components/Ingredients Section
             Text("Bahan Baku", style = MaterialTheme.typography.titleMedium)
             form.components.forEachIndexed { index, comp ->
+                // Exclude products already selected in other rows to prevent duplicates
+                val usedProductIds = form.components
+                    .mapIndexedNotNull { i, c -> if (i != index && c.productId.isNotEmpty()) c.productId else null }
+                    .toSet()
+                val availableProducts = rawMaterialProducts.filter {
+                    it.id !in usedProductIds || it.id == comp.productId
+                }
+
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
                 ) {
                     Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        // Product dropdown
+                        // Product dropdown (filtered — no duplicates across rows)
                         var productExpanded by remember { mutableStateOf(false) }
                         val selectedProduct = rawMaterialProducts.find { it.id == comp.productId }
                         ExposedDropdownMenuBox(
@@ -221,11 +230,11 @@ fun ProductFormScreen(
                                 expanded = productExpanded,
                                 onDismissRequest = { productExpanded = false }
                             ) {
-                                rawMaterialProducts.forEach { product ->
+                                availableProducts.forEach { product ->
                                     DropdownMenuItem(
                                         text = { Text(product.name) },
                                         onClick = {
-                                            viewModel.updateComponent(index, product.id, "", comp.qty, comp.unit)
+                                            viewModel.onComponentProductSelected(index, product.id)
                                             productExpanded = false
                                         }
                                     )
@@ -279,37 +288,15 @@ fun ProductFormScreen(
                                 singleLine = true
                             )
 
-                            // Unit dropdown
-                            var unitExpanded by remember { mutableStateOf(false) }
-                            ExposedDropdownMenuBox(
-                                expanded = unitExpanded,
-                                onExpandedChange = { unitExpanded = it },
-                                modifier = Modifier.weight(0.8f)
-                            ) {
-                                OutlinedTextField(
-                                    value = comp.unit,
-                                    onValueChange = {},
-                                    readOnly = true,
-                                    label = { Text("Satuan") },
-                                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(unitExpanded) },
-                                    modifier = Modifier.fillMaxWidth().menuAnchor(),
-                                    singleLine = true
-                                )
-                                ExposedDropdownMenu(
-                                    expanded = unitExpanded,
-                                    onDismissRequest = { unitExpanded = false }
-                                ) {
-                                    listOf("pcs", "ml", "g", "kg", "L").forEach { unit ->
-                                        DropdownMenuItem(
-                                            text = { Text(unit) },
-                                            onClick = {
-                                                viewModel.updateComponent(index, comp.productId, comp.variantId, comp.qty, unit)
-                                                unitExpanded = false
-                                            }
-                                        )
-                                    }
-                                }
-                            }
+                            // Unit — read-only, derived from raw material's inventory base unit
+                            OutlinedTextField(
+                                value = comp.unit,
+                                onValueChange = {},
+                                label = { Text("Satuan") },
+                                modifier = Modifier.weight(0.8f),
+                                enabled = false,
+                                singleLine = true
+                            )
                         }
 
                         // Remove button

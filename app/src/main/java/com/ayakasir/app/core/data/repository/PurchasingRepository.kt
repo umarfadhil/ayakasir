@@ -11,6 +11,7 @@ import com.ayakasir.app.core.data.local.entity.InventoryEntity
 import com.ayakasir.app.core.data.local.entity.SyncQueueEntity
 import com.ayakasir.app.core.domain.model.GoodsReceiving
 import com.ayakasir.app.core.domain.model.GoodsReceivingItem
+import com.ayakasir.app.core.domain.model.LedgerType
 import com.ayakasir.app.core.domain.model.SyncStatus
 import com.ayakasir.app.core.session.SessionManager
 import com.ayakasir.app.core.sync.SyncManager
@@ -32,7 +33,8 @@ class PurchasingRepository @Inject constructor(
     private val syncQueueDao: SyncQueueDao,
     private val syncScheduler: SyncScheduler,
     private val syncManager: SyncManager,
-    private val sessionManager: SessionManager
+    private val sessionManager: SessionManager,
+    private val generalLedgerRepository: GeneralLedgerRepository
 ) {
     private val restaurantId: String get() = sessionManager.currentRestaurantId ?: ""
 
@@ -182,6 +184,19 @@ class PurchasingRepository @Inject constructor(
             }
         }
 
+        // Record COGS ledger entry (non-cash, informational)
+        val totalCost = items.sumOf { it.qty.toLong() * it.costPerUnit }
+        if (totalCost > 0) {
+            val userId = sessionManager.currentUser.value?.id ?: ""
+            generalLedgerRepository.recordEntry(
+                type = LedgerType.COGS,
+                amount = -totalCost,
+                description = "Pembelian barang",
+                userId = userId,
+                referenceId = receivingId
+            )
+        }
+
         return receivingId
     }
 
@@ -304,6 +319,20 @@ class PurchasingRepository @Inject constructor(
                 syncScheduler.requestImmediateSync()
             }
         }
+
+        // Update COGS ledger entry: delete old + record new
+        generalLedgerRepository.deleteByReferenceId(receivingId, LedgerType.COGS)
+        val totalCost = newItems.sumOf { it.qty.toLong() * it.costPerUnit }
+        if (totalCost > 0) {
+            val userId = sessionManager.currentUser.value?.id ?: ""
+            generalLedgerRepository.recordEntry(
+                type = LedgerType.COGS,
+                amount = -totalCost,
+                description = "Pembelian barang",
+                userId = userId,
+                referenceId = receivingId
+            )
+        }
     }
 
     suspend fun deleteReceiving(receivingId: String) {
@@ -356,5 +385,8 @@ class PurchasingRepository @Inject constructor(
                 syncScheduler.requestImmediateSync()
             }
         }
+
+        // Delete COGS ledger entry
+        generalLedgerRepository.deleteByReferenceId(receivingId, LedgerType.COGS)
     }
 }

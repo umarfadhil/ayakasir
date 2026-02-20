@@ -159,12 +159,19 @@ class TransactionRepository @Inject constructor(
             }
         }
 
-        // Record ledger entry for CASH sales
-        if (paymentMethod == PaymentMethod.CASH) {
-            generalLedgerRepository.recordEntry(
+        // Record ledger entry for sales
+        when (paymentMethod) {
+            PaymentMethod.CASH -> generalLedgerRepository.recordEntry(
                 type = LedgerType.SALE,
                 amount = total,
                 description = "Penjualan tunai",
+                userId = userId,
+                referenceId = txnId
+            )
+            PaymentMethod.QRIS -> generalLedgerRepository.recordEntry(
+                type = LedgerType.SALE_QRIS,
+                amount = total,
+                description = "Penjualan QRIS",
                 userId = userId,
                 referenceId = txnId
             )

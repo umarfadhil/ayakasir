@@ -384,32 +384,35 @@ fun GoodsReceivingFormScreen(
                         val unitOptions = listOf("pcs", "ml", "g", "kg", "L")
                         ExposedDropdownMenuBox(
                             expanded = unitExpanded,
-                            onExpandedChange = { unitExpanded = it },
+                            onExpandedChange = { if (!currentItem.unitLocked) unitExpanded = it },
                             modifier = Modifier.weight(1f)
                         ) {
                             OutlinedTextField(
                                 value = currentItem.unit,
-                                onValueChange = { viewModel.onCurrentItemUnitChange(it) },
+                                onValueChange = { if (!currentItem.unitLocked) viewModel.onCurrentItemUnitChange(it) },
                                 label = { Text("Satuan") },
+                                readOnly = currentItem.unitLocked,
                                 trailingIcon = {
-                                    ExposedDropdownMenuDefaults.TrailingIcon(
-                                        unitExpanded
-                                    )
+                                    if (!currentItem.unitLocked) {
+                                        ExposedDropdownMenuDefaults.TrailingIcon(unitExpanded)
+                                    }
                                 },
                                 modifier = Modifier.fillMaxWidth().menuAnchor(),
                                 singleLine = true
                             )
-                            ExposedDropdownMenu(
-                                expanded = unitExpanded,
-                                onDismissRequest = { unitExpanded = false }) {
-                                unitOptions.forEach { unit ->
-                                    DropdownMenuItem(
-                                        text = { Text(unit) },
-                                        onClick = {
-                                            viewModel.onCurrentItemUnitChange(unit)
-                                            unitExpanded = false
-                                        }
-                                    )
+                            if (!currentItem.unitLocked) {
+                                ExposedDropdownMenu(
+                                    expanded = unitExpanded,
+                                    onDismissRequest = { unitExpanded = false }) {
+                                    unitOptions.forEach { unit ->
+                                        DropdownMenuItem(
+                                            text = { Text(unit) },
+                                            onClick = {
+                                                viewModel.onCurrentItemUnitChange(unit)
+                                                unitExpanded = false
+                                            }
+                                        )
+                                    }
                                 }
                             }
                         }

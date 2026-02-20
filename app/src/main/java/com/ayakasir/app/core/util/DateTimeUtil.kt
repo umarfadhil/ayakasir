@@ -28,7 +28,12 @@ object DateTimeUtil {
     fun formatTime(epochMillis: Long): String = timeFormat.format(Date(epochMillis))
 
     fun todayRange(): Pair<Long, Long> {
+        return dayRange(System.currentTimeMillis())
+    }
+
+    fun dayRange(epochMillis: Long): Pair<Long, Long> {
         val cal = Calendar.getInstance(wib)
+        cal.timeInMillis = epochMillis
         cal.set(Calendar.HOUR_OF_DAY, 0)
         cal.set(Calendar.MINUTE, 0)
         cal.set(Calendar.SECOND, 0)
@@ -36,6 +41,38 @@ object DateTimeUtil {
         val start = cal.timeInMillis
 
         cal.add(Calendar.DAY_OF_MONTH, 1)
+        val end = cal.timeInMillis
+
+        return start to end
+    }
+
+    fun monthRange(epochMillis: Long = System.currentTimeMillis()): Pair<Long, Long> {
+        val cal = Calendar.getInstance(wib)
+        cal.timeInMillis = epochMillis
+        cal.set(Calendar.DAY_OF_MONTH, 1)
+        cal.set(Calendar.HOUR_OF_DAY, 0)
+        cal.set(Calendar.MINUTE, 0)
+        cal.set(Calendar.SECOND, 0)
+        cal.set(Calendar.MILLISECOND, 0)
+        val start = cal.timeInMillis
+
+        cal.add(Calendar.MONTH, 1)
+        val end = cal.timeInMillis
+
+        return start to end
+    }
+
+    fun yearRange(epochMillis: Long = System.currentTimeMillis()): Pair<Long, Long> {
+        val cal = Calendar.getInstance(wib)
+        cal.timeInMillis = epochMillis
+        cal.set(Calendar.DAY_OF_YEAR, 1)
+        cal.set(Calendar.HOUR_OF_DAY, 0)
+        cal.set(Calendar.MINUTE, 0)
+        cal.set(Calendar.SECOND, 0)
+        cal.set(Calendar.MILLISECOND, 0)
+        val start = cal.timeInMillis
+
+        cal.add(Calendar.YEAR, 1)
         val end = cal.timeInMillis
 
         return start to end

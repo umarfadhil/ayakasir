@@ -12,7 +12,10 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -20,6 +23,7 @@ import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -34,10 +38,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import com.ayakasir.app.core.domain.model.Product
 import com.ayakasir.app.core.domain.model.ProductType
 import com.ayakasir.app.core.ui.component.ConfirmDialog
 import com.ayakasir.app.core.util.CurrencyFormatter
-import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -48,11 +53,40 @@ fun ProductListScreen(
     viewModel: ProductManagementViewModel = hiltViewModel()
 ) {
     val products by viewModel.products.collectAsStateWithLifecycle()
+    val menuCategories by viewModel.menuCategories.collectAsStateWithLifecycle()
     val isRefreshing by viewModel.isRefreshing.collectAsStateWithLifecycle()
     var deleteId by remember { mutableStateOf<String?>(null) }
+    var searchQuery by remember { mutableStateOf("") }
+    var isSearchVisible by remember { mutableStateOf(false) }
 
     val menuItems = remember(products) {
         products.filter { it.productType == ProductType.MENU_ITEM }
+    }
+    val normalizedQuery = searchQuery.trim()
+    val filteredMenuItems = remember(menuItems, normalizedQuery) {
+        if (normalizedQuery.isBlank()) {
+            menuItems
+        } else {
+            menuItems.filter { it.name.contains(normalizedQuery, ignoreCase = true) }
+        }
+    }
+    val groupedMenuItems = remember(filteredMenuItems, menuCategories) {
+        val categoryById = menuCategories.associateBy { it.id }
+        buildList {
+            menuCategories.forEach { category ->
+                val sectionItems = filteredMenuItems.filter { it.categoryId == category.id }
+                if (sectionItems.isNotEmpty()) {
+                    add(MenuSection(key = category.id, title = category.name, items = sectionItems))
+                }
+            }
+
+            val uncategorizedItems = filteredMenuItems.filter { item ->
+                item.categoryId.isBlank() || categoryById[item.categoryId] == null
+            }
+            if (uncategorizedItems.isNotEmpty()) {
+                add(MenuSection(key = "uncategorized", title = "Tanpa Kategori", items = uncategorizedItems))
+            }
+        }
     }
 
     Scaffold(
@@ -62,6 +96,23 @@ fun ProductListScreen(
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Kembali")
+                    }
+                },
+                actions = {
+                    IconButton(
+                        onClick = {
+                            if (isSearchVisible) {
+                                isSearchVisible = false
+                                searchQuery = ""
+                            } else {
+                                isSearchVisible = true
+                            }
+                        }
+                    ) {
+                        Icon(
+                            imageVector = if (isSearchVisible) Icons.Filled.Close else Icons.Filled.Search,
+                            contentDescription = if (isSearchVisible) "Tutup Pencarian" else "Cari Menu"
+                        )
                     }
                 }
             )
@@ -77,27 +128,52 @@ fun ProductListScreen(
             onRefresh = { viewModel.refresh() },
             modifier = Modifier.fillMaxSize().padding(padding)
         ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 24.dp)
-        ) {
-            if (menuItems.isEmpty()) {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("Belum ada produk", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 24.dp)
+            ) {
+                if (isSearchVisible) {
+                    OutlinedTextField(
+                        value = searchQuery,
+                        onValueChange = { searchQuery = it },
+                        label = { Text("Cari Judul Menu") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
                 }
-            } else {
-                LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(menuItems, key = { it.id }) { product ->
-                        ProductCard(
-                            product = product,
-                            onEdit = { onEditProduct(product.id) },
-                            onDelete = { deleteId = product.id }
-                        )
+
+                if (menuItems.isEmpty()) {
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text("Belum ada produk", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                } else if (filteredMenuItems.isEmpty()) {
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text("Menu tidak ditemukan", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                } else {
+                    LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        groupedMenuItems.forEach { section ->
+                            item(key = "header_${section.key}") {
+                                Text(
+                                    text = section.title,
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(top = 8.dp)
+                                )
+                            }
+                            items(section.items, key = { it.id }) { product ->
+                                ProductCard(
+                                    product = product,
+                                    onEdit = { onEditProduct(product.id) },
+                                    onClone = { viewModel.cloneProduct(product.id) },
+                                    onDelete = { deleteId = product.id }
+                                )
+                            }
+                        }
                     }
                 }
             }
-        }
         } // PullToRefreshBox
     }
 
@@ -111,10 +187,17 @@ fun ProductListScreen(
     }
 }
 
+private data class MenuSection(
+    val key: String,
+    val title: String,
+    val items: List<Product>
+)
+
 @Composable
 private fun ProductCard(
-    product: com.ayakasir.app.core.domain.model.Product,
+    product: Product,
     onEdit: () -> Unit,
+    onClone: () -> Unit,
     onDelete: () -> Unit
 ) {
     Card(
@@ -134,8 +217,13 @@ private fun ProductCard(
                     Text("${product.variants.size} varian", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
-            IconButton(onClick = onDelete) {
-                Icon(Icons.Filled.Delete, contentDescription = "Hapus", tint = MaterialTheme.colorScheme.error)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = onClone) {
+                    Icon(Icons.Filled.ContentCopy, contentDescription = "Clone")
+                }
+                IconButton(onClick = onDelete) {
+                    Icon(Icons.Filled.Delete, contentDescription = "Hapus", tint = MaterialTheme.colorScheme.error)
+                }
             }
         }
     }

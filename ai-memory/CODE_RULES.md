@@ -172,9 +172,10 @@ interface ExampleDao {
 
 ## Pull Sync Rules
 - `SyncManager.pullAllFromSupabase(restaurantId)` pulls all 13 tenant-related tables from Supabase and upserts to Room (REPLACE strategy = server wins).
-- Called in two places:
-  1. **`AuthViewModel.loginWithEmail()`** — after `loginFull()` succeeds, before navigating to app. Ensures cross-device sync on login.
-  2. **`SyncManager.syncAll()`** — Phase 2 after push queue is processed. Runs during every WorkManager periodic sync (15 min).
+- Called in three places:
+  1. **`AuthViewModel.loginWithEmail()`** — after `loginFull()` succeeds, before navigating to app (blocking). Ensures cross-device sync on login.
+  2. **`AuthViewModel.authenticatePin()`** — after `loginPin()` succeeds, in a background coroutine (non-blocking). Catches changes made while app was closed.
+  3. **`SyncManager.syncAll()`** — Phase 2 after push queue is processed. Runs during every WorkManager periodic sync (15 min).
 - Pull is 3-phase to respect Room FK constraints:
   - Phase 1 (parallel): categories, vendors, users, cash_withdrawals, general_ledger (leaf/independent tables)
   - Phase 2 (parallel, after phase 1): products, goods_receiving, transactions, inventory
@@ -216,6 +217,7 @@ interface ExampleDao {
 - UUID: `UuidGenerator.generate()`
 - Currency: `CurrencyFormatter.format(25000L)` → "Rp25.000"
 - Date: `DateTimeUtil.todayRange()` → (start: Long, end: Long)
+- Date (period): `DateTimeUtil.dayRange(epochMillis)`, `DateTimeUtil.monthRange()`, `DateTimeUtil.yearRange()`
 - PIN: `PinHasher.hash(pin, salt)`, `PinHasher.verify(pin, salt, hash)`
 - Unit: `UnitConverter.normalizeToBase(1, "kg")` → (1000, "g"), `UnitConverter.convert(200, "g", "g")` → 200, `UnitConverter.formatForDisplay(1500, "g")` → "1.5 kg"
 
@@ -238,7 +240,9 @@ interface ExampleDao {
 - Reserve `@Relation` for UI-facing read flows (Flow-based queries) where timing is not critical.
 
 ## Realtime Sync Rules
-- `RealtimeManager` (@Singleton) subscribes to Supabase Postgres Changes for all 12 tenant tables via a single channel filtered by `restaurant_id`.
+- `RealtimeManager` (@Singleton) subscribes to Supabase Postgres Changes for all 12 tenant tables + `restaurants` table (13 listeners total) via a single channel.
+- Tenant tables filtered by `restaurant_id`; `restaurants` table filtered by `id` (the restaurant's own record).
+- The `restaurants` listener also updates `QrisSettingsDataStore` with QRIS fields on UPDATE — enables real-time QRIS sync across devices.
 - Lifecycle: `connect(restaurantId)` called from `SessionManager.loginFull()` and `loginPin()`; `disconnect()` called from `SessionManager.logout()`.
 - On INSERT/UPDATE: `action.decodeRecord<Dto>().toEntity()` → `dao.insert()` (REPLACE).
 - On DELETE: `action.decodeOldRecord<Dto>()` → `dao.deleteById(id)`.
@@ -272,6 +276,12 @@ PullToRefreshBox(
 ) { /* existing content */ }
 ```
 
+## Dashboard Date Filter Rule
+- Dashboard period options must include exactly: `Hari ini`, `Bulan ini`, `Tahun ini`, `Pilih tanggal`.
+- `Pilih tanggal` uses a single-date picker, then maps to a full-day range via `DateTimeUtil.dayRange(selectedDateMillis)`.
+- Keep selected period in ViewModel `StateFlow`, and derive metric flows with `flatMapLatest` based on the active date range.
+- Dashboard sales summary/product summary empty states should use the active period label (not hardcoded "hari ini").
+
 ## Cascade Delete Sync Rule
 When a parent operation cascades to child entities (e.g., delete product → variants/components deleted):
 1. Collect child IDs BEFORE local cascade delete (via `dao.getByProductIdDirect()`)
@@ -298,15 +308,30 @@ Same applies to replace operations (e.g., update product replaces variants):
 - To set up a new dev environment: add `SUPABASE_URL=https://...` and `SUPABASE_ANON_KEY=eyJ...` to `local.properties`.
 
 ## General Ledger Rule
-- Cash balance is derived from `SUM(amount)` of `general_ledger` table — no separate balance store.
-- `LedgerType` enum: `INITIAL_BALANCE`, `SALE`, `WITHDRAWAL`, `ADJUSTMENT`.
-- Signed amounts: positive = inflow (INITIAL_BALANCE, SALE, ADJUSTMENT credit), negative = outflow (WITHDRAWAL).
-- Every cash event MUST create a ledger entry via `GeneralLedgerRepository.recordEntry()`:
+- Cash balance (Saldo Kas) is derived from `SUM(amount) WHERE type IN ('INITIAL_BALANCE', 'SALE', 'WITHDRAWAL', 'ADJUSTMENT')` — only cash-affecting types.
+- `LedgerType` enum: `INITIAL_BALANCE`, `SALE`, `SALE_QRIS`, `WITHDRAWAL`, `ADJUSTMENT`, `COGS`.
+- **Cash-affecting types** (included in Saldo Kas): `INITIAL_BALANCE`, `SALE`, `WITHDRAWAL`, `ADJUSTMENT`.
+- **Non-cash types** (recorded for bookkeeping, excluded from Saldo Kas): `SALE_QRIS`, `COGS`.
+- Supabase `general_ledger.type` CHECK constraint MUST include all six ledger types above; otherwise `SALE_QRIS` / `COGS` pushes will fail and stay queued.
+- For existing Supabase databases, run `supabase/migration_general_ledger_type_constraint.sql` once to align the remote constraint.
+- Signed amounts: positive = inflow (INITIAL_BALANCE, SALE, SALE_QRIS, ADJUSTMENT credit), negative = outflow (WITHDRAWAL, COGS).
+- Every financial event MUST create a ledger entry via `GeneralLedgerRepository.recordEntry()`:
   - **CASH sale** (TransactionRepository): `LedgerType.SALE`, amount = transaction total, referenceId = transaction ID
+  - **QRIS sale** (TransactionRepository): `LedgerType.SALE_QRIS`, amount = transaction total, referenceId = transaction ID
   - **Withdrawal** (CashWithdrawalRepository): `LedgerType.WITHDRAWAL`, amount = -withdrawalAmount, referenceId = withdrawal ID
   - **Initial balance** (InitialBalanceViewModel): `LedgerType.INITIAL_BALANCE`, amount = balance amount
+  - **Goods receiving** (PurchasingRepository): `LedgerType.COGS`, amount = -totalCost, referenceId = goods_receiving ID
   - **Adjustment** (future): `LedgerType.ADJUSTMENT`, amount = +/- delta
+- COGS entries are managed on create/update/delete of goods receiving: `deleteByReferenceId()` removes old entry before recording new one on update; deletes on goods receiving deletion.
 - `CashBalanceRepository` reads from `GeneralLedgerRepository` flows (no DataStore, no TransactionRepository, no CashWithdrawalRepository).
+- `CashBalance` model includes `totalQrisSales` and `totalCogs` for informational display (shown in "Info Tambahan" section of CashBalanceDetailDialog).
+
+## General Ledger CSV Export Rule
+- Data source is `general_ledger` as the base table, enriched via reference joins for readability.
+- Export rows MUST stay tenant-scoped with `WHERE general_ledger.restaurant_id = currentRestaurantId`.
+- `SALE`, `SALE_QRIS`, and `COGS` exports use one row per item by joining `transaction_items` or `goods_receiving_items` through `reference_id`.
+- CSV columns order must be: `id,type,product_name,variant_name,amount,qty,description`.
+- Default file name format: `ayakasir_<restaurant_name>_<ddmmyyyy>.csv`.
 
 ## Feature-Gated Screen Content Rule
 - For screens that vary content by user role/features (e.g., SettingsScreen), create a minimal ViewModel that reads `sessionManager.currentUser` and exposes:
@@ -314,11 +339,18 @@ Same applies to replace operations (e.g., update product replaces variants):
   - `isOwner: StateFlow<Boolean>` — true if OWNER role. Controls owner-only cards within settings.
 - Screen collects both values via `collectAsStateWithLifecycle()`:
   - `if (showFullSettings)` → show settings cards (Printer + owner-only cards)
-  - `if (isOwner)` → show owner-only cards: Saldo Awal Kas, Manajemen User, Manajemen Kategori, Manajemen Vendor, Manajemen Barang, Pengaturan QRIS
+  - `if (isOwner)` → show owner-only cards: Saldo Awal Kas, Manajemen User, Manajemen Kategori, Manajemen Vendor, Manajemen Barang, Pengaturan QRIS, Unduh Data
   - Cashier with SETTINGS access sees: Pengaturan Printer + Keluar only.
 - The logout button MUST always be visible regardless of feature access (every role needs to log out).
 - For screens with an existing ViewModel that already injects `SessionManager`, expose `val isOwner: Boolean get() = sessionManager.isOwner` (no StateFlow needed) and use `if (isOwner)` in Composable for owner-only UI elements.
 - **Pembelian screen:** Penerimaan Barang edit/delete buttons are owner-only. Cashiers can add new records (FAB visible) but cannot edit or delete existing ones.
+
+## Menu List Screen Pattern
+- `ProductListScreen` renders only `ProductType.MENU_ITEM`.
+- Render list grouped by menu categories (`menuCategories` order from repository). If a menu item's category is blank/missing, place it under `"Tanpa Kategori"`.
+- Top-right app bar search action toggles a title search field and filters by case-insensitive `product.name` match.
+- Clone action must duplicate the full menu definition: base product fields + variants + product components.
+- Clone naming convention: `<original> (Copy)` then `<original> (Copy 2)`, `<original> (Copy 3)`, and so on to avoid collisions.
 
 ## AlertDialog Delete Confirmation Pattern
 ```kotlin
@@ -357,6 +389,25 @@ Box(modifier = Modifier.heightIn(max = 180.dp)) {
 }
 ```
 
+## Printer Connectivity + Receipt Rule
+- Printer transport layer must support both:
+  - `PrinterConnectionType.BLUETOOTH` (SPP UUID `00001101-0000-1000-8000-00805F9B34FB`)
+  - `PrinterConnectionType.WIFI` (raw TCP, default port `9100`)
+- Persist last successful printer target (`connection_type`, bluetooth address/name, wifi host/port) and make `print()` attempt `reconnectIfSaved()` when no active socket is connected.
+- `PrinterSettingsScreen` must provide:
+  - Bluetooth paired-device list + shortcut to system Bluetooth pairing page.
+  - WiFi host/port input and connect action.
+  - Test print action.
+- Receipt format (`EscPosReceiptBuilder`) must include:
+  - Header = restaurant name
+  - Date and time line
+  - Item rows with item name, qty, sub-total
+  - `GRAND TOTAL` line
+  - Footer exact text: `Dicetak melalui apliakasi AyaKa$ir`
+- POS flow: after successful `createTransaction()` for every payment method (CASH and QRIS), show print confirmation dialog.
+  - If user confirms print -> send receipt immediately to printer manager.
+  - If user declines print -> clear pending receipt state and continue POS flow.
+
 ## DO NOT
 - Hard-code IDs (use UuidGenerator)
 - Hard-code Supabase credentials in build.gradle.kts (use local.properties)
@@ -370,8 +421,9 @@ Box(modifier = Modifier.heightIn(max = 180.dp)) {
 - Cascade-delete child entities without syncing each deletion to Supabase
 - Use case-sensitive `eq` for email queries (use `ilike` for Supabase, `LOWER()` for Room)
 - Silently swallow exceptions without logging in network calls
-- Forget to create a ledger entry when recording cash events (SALE, WITHDRAWAL, INITIAL_BALANCE)
+- Forget to create a ledger entry when recording financial events (SALE, SALE_QRIS, WITHDRAWAL, INITIAL_BALANCE, COGS)
+- Add new LedgerType values to the `getBalance()` SQL IN clause unless they should affect Saldo Kas
+- Let `supabase/schema.sql` `general_ledger.type` CHECK drift from `LedgerType` enum values (causes remote sync rejection)
 - Forget to set `restaurantId = sessionManager.currentRestaurantId` when creating new users via owner
 - Use `Column + verticalScroll` inside AlertDialog for long lists (use `Box(heightIn) + LazyColumn` instead)
-
 

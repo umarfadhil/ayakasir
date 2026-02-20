@@ -2,6 +2,7 @@ package com.ayakasir.app.feature.purchasing
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.ayakasir.app.core.data.local.dao.InventoryDao
 import com.ayakasir.app.core.data.repository.CategoryRepository
 import com.ayakasir.app.core.data.repository.ProductRepository
 import com.ayakasir.app.core.data.repository.PurchasingRepository
@@ -32,6 +33,7 @@ class PurchasingViewModel @Inject constructor(
     private val purchasingRepository: PurchasingRepository,
     private val productRepository: ProductRepository,
     private val categoryRepository: CategoryRepository,
+    private val inventoryDao: InventoryDao,
     private val syncManager: SyncManager,
     private val sessionManager: SessionManager
 ) : ViewModel() {
@@ -82,6 +84,7 @@ class PurchasingViewModel @Inject constructor(
         val qty: String = "1",
         val totalPrice: String = "0",
         val unit: String = "pcs",
+        val unitLocked: Boolean = false,
         val showAddCategory: Boolean = false,
         val newCategoryName: String = "",
         val showAddProduct: Boolean = false,
@@ -168,15 +171,28 @@ class PurchasingViewModel @Inject constructor(
 
     // Current item input methods
     fun onCurrentItemCategoryChange(categoryId: String, categoryName: String) {
-        _currentItemInput.update { it.copy(categoryId = categoryId, categoryName = categoryName, productId = "", variantId = "", productName = "") }
+        _currentItemInput.update { it.copy(categoryId = categoryId, categoryName = categoryName, productId = "", variantId = "", productName = "", unitLocked = false) }
     }
 
     fun onCurrentItemProductChange(product: Product) {
-        _currentItemInput.update { it.copy(productId = product.id, productName = product.name, categoryId = product.categoryId, variantId = "") }
+        _currentItemInput.update { it.copy(productId = product.id, productName = product.name, categoryId = product.categoryId, variantId = "", unitLocked = false) }
+        viewModelScope.launch {
+            val inv = inventoryDao.get(product.id, "")
+            if (inv != null) {
+                _currentItemInput.update { it.copy(unit = inv.unit, unitLocked = true) }
+            }
+        }
     }
 
     fun onCurrentItemVariantChange(variantId: String) {
-        _currentItemInput.update { it.copy(variantId = variantId) }
+        val productId = _currentItemInput.value.productId
+        _currentItemInput.update { it.copy(variantId = variantId, unitLocked = false) }
+        viewModelScope.launch {
+            val inv = inventoryDao.get(productId, variantId)
+            if (inv != null) {
+                _currentItemInput.update { it.copy(unit = inv.unit, unitLocked = true) }
+            }
+        }
     }
 
     fun onCurrentItemQtyChange(value: String) {

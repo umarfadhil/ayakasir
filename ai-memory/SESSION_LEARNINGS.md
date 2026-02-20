@@ -1,5 +1,127 @@
 # Session Learnings
 
+## 2026-02-20: Printer Settings (Bluetooth + WiFi) + POS Print Prompt
+
+### Goal
+Enable Pengaturan Printer to connect via Bluetooth or WiFi and enforce a required receipt structure, then prompt print/no-print after every successful sales transaction in Kasir (CASH and QRIS).
+
+### Implementation
+- Extended `BluetoothPrinterManager` into a dual-transport printer manager:
+  - Bluetooth SPP (`00001101-0000-1000-8000-00805F9B34FB`)
+  - WiFi raw TCP (default port `9100`)
+- Added persistent saved printer config (`connection_type`, bluetooth address/name, wifi host/port) and reconnect-on-print behavior when no active socket exists.
+- Added `PrinterConnectionType` enum and enriched `PrinterStatus` with connection target/type metadata.
+- Replaced `PrinterSettingsScreen` placeholder with full UI + `PrinterSettingsViewModel`:
+  - Bluetooth permission request flow (`BLUETOOTH_CONNECT`, `BLUETOOTH_SCAN`)
+  - paired device list + system pairing shortcut
+  - WiFi host/port connect
+  - test print action
+- Updated `EscPosReceiptBuilder` output format to always include:
+  - Header (restaurant name)
+  - date/time
+  - item rows (name + qty + sub-total)
+  - `GRAND TOTAL`
+  - footer exact text: `Dicetak melalui apliakasi AyaKa$ir`
+- Updated POS flow (`PosViewModel` + `PosScreen`):
+  - after successful transaction creation (CASH/QRIS), store pending receipt payload
+  - show confirmation dialog `Cetak Struk`
+  - on confirm: immediately dispatch to printer manager
+  - on dismiss: clear pending receipt state
+
+### Durable Rules
+- For printer integration in this project, use ESC/POS bytes and keep both Bluetooth SPP and WiFi TCP paths available.
+- Always save the last successful printer target and let print path attempt reconnect automatically.
+- Post-payment print UX in POS must be an explicit confirmation step (`Cetak` / `Tidak`) and must run for both CASH and QRIS completion paths.
+- Footer text must stay exactly `Dicetak melalui apliakasi AyaKa$ir` to maintain receipt consistency.
+
+## 2026-02-20: Pengaturan - Unduh Data CSV (General Ledger Export)
+
+### Goal
+Add an owner-only `Unduh Data` action in Pengaturan that exports `general_ledger` to CSV, enriched with product/variant/qty from referenced item tables for readability.
+
+### Implementation
+- Added `GeneralLedgerDao.getExportRows(restaurantId)` with SQL joins:
+  - Base: `general_ledger`
+  - `SALE` / `SALE_QRIS` -> `transaction_items` by `reference_id = transaction_id`
+  - `COGS` -> `goods_receiving_items` by `reference_id = receiving_id`, plus product/variant name joins
+- Export shape is **one row per item** for `SALE`, `SALE_QRIS`, and `COGS`.
+- Added `LedgerExportRepository`:
+  - Builds default filename `ayakasir_<restaurant_name>_<ddmmyyyy>.csv`
+  - Sanitizes filename segment for invalid filesystem chars
+  - Builds CSV with exact columns:
+    `id,type,product_name,variant_name,amount,qty,description`
+  - Writes UTF-8 CSV (with BOM) via `ContentResolver.openOutputStream(uri)`
+- Added export state/actions in `SettingsViewModel` (`isExporting`, success/error message, export trigger).
+- Added owner-only `Unduh Data` card in `SettingsScreen`:
+  - Uses `ActivityResultContracts.CreateDocument("text/csv")`
+  - Shows progress indicator while exporting
+  - Shows snackbar on success/error
+
+### Durable Rules
+- CSV export must remain tenant-isolated: always filter by `general_ledger.restaurant_id = sessionManager.currentRestaurantId`.
+- Keep `general_ledger` as source of truth for export and enrich via reference joins only.
+- Keep export columns stable in this order for compatibility:
+  `id,type,product_name,variant_name,amount,qty,description`.
+
+## 2026-02-20: General Ledger — QRIS Sales & COGS (Non-Cash Entries)
+
+### Problem
+QRIS sales were not recorded in the general_ledger at all. Goods receiving (pembelian) had no ledger footprint. Both should be tracked for bookkeeping but must not affect Saldo Kas (cash balance).
+
+### Solution: Type-Based Filtering (No Schema Migration)
+- Added `SALE_QRIS` and `COGS` to `LedgerType` enum.
+- Updated `GeneralLedgerDao.getBalance()` SQL to `WHERE type IN ('INITIAL_BALANCE', 'SALE', 'WITHDRAWAL', 'ADJUSTMENT')` — new types automatically excluded from cash balance.
+- No Room migration needed (type is stored as String text).
+- No Supabase migration needed (type column is text, no constraints).
+
+### Key Design Decisions
+- **Type-based vs column-based:** Chose type-based filtering over adding an `affects_cash: Boolean` column to avoid schema migration. The IN clause in `getBalance()` defines which types are "cash-affecting."
+- **COGS lifecycle:** COGS entries are created on goods receiving create, replaced on update (`deleteByReferenceId` + new `recordEntry`), and deleted on goods receiving delete. Uses `referenceId = receivingId` for lookup.
+- **COGS amount:** Stored as negative (expense convention). Total cost = `items.sumOf { qty.toLong() * costPerUnit }`.
+- **CashBalance model:** Added `totalQrisSales` and `totalCogs` with default `= 0` to avoid breaking existing positional constructor calls.
+- **CashBalanceRepository:** Uses nested `combine()` — inner combine for 5 cash-affecting flows, outer combine adds QRIS + COGS (avoids >5 parameter limit of `combine`).
+- **CashBalanceDetailDialog:** Shows non-cash entries under "Info Tambahan" section, only when values are non-zero.
+
+### Files Changed
+- `LedgerType.kt` — Added SALE_QRIS, COGS
+- `GeneralLedgerDao.kt` — Filtered getBalance(), added getByReferenceIdAndType()
+- `GeneralLedgerRepository.kt` — Added deleteByReferenceId()
+- `CashBalance.kt` — Added totalQrisSales, totalCogs
+- `CashBalanceRepository.kt` — Nested combine for >5 flows
+- `TransactionRepository.kt` — Added QRIS sale ledger entry (when block → when expression)
+- `PurchasingRepository.kt` — Injected GeneralLedgerRepository, added COGS on create/update/delete
+- `CashBalanceDetailDialog.kt` — Added "Info Tambahan" section
+
+## 2026-02-20: Product Form — No-Duplicate Raw Materials & Disabled Unit
+
+### No-Duplicate Raw Material Dropdown
+- For each component row, compute `usedProductIds` = productIds selected in all OTHER rows.
+- Filter `availableProducts = rawMaterialProducts.filter { it.id !in usedProductIds || it.id == comp.productId }` — keeps current row's own selection visible.
+- Computed inline inside `forEachIndexed` in the Screen composable; no ViewModel change needed for this logic.
+
+### Unit Auto-Fill & Disabled
+- Unit is now read-only: derived from the raw material's inventory base unit (`InventoryEntity.unit`).
+- Added `rawMaterialUnitMap: StateFlow<Map<String, String>>` to `ProductManagementViewModel` — maps productId → unit, sourced from `inventoryRepository.getAllInventory().map { items -> items.associate { it.productId to it.unit } }`.
+- Added `onComponentProductSelected(index, productId)` to ViewModel — looks up unit from `rawMaterialUnitMap.value[productId] ?: "pcs"`, resets variantId, and updates the component row.
+- Screen calls `viewModel.onComponentProductSelected(index, product.id)` when a product is picked (instead of `updateComponent`).
+- Unit `OutlinedTextField` rendered with `enabled = false` (no dropdown, no interaction).
+- Injected `InventoryRepository` into `ProductManagementViewModel` constructor.
+
+## 2026-02-19: POS "Semua" Tab — Grouped by Category
+- When `selectedCategoryId == null` (Semua), products are now grouped by category with full-width headers.
+- Implementation: `LazyVerticalGrid` + `item(span = { GridItemSpan(maxLineSpan) })` for category headers, `items(categoryProducts)` for product cards per category.
+- `productsByCategory = remember(products) { products.groupBy { it.categoryId } }` — derived inside composable, no ViewModel change needed.
+- Categories are iterated in their existing sorted order from `categories: StateFlow<List<Category>>`.
+- Products whose `categoryId` doesn't match any current category are silently omitted (consistent with per-category tab behavior).
+- No ViewModel change: data already available (`products` flat list + `categories` list).
+- Import needed: `import androidx.compose.foundation.lazy.grid.GridItemSpan`
+
+## 2026-02-19: POS Cash Payment Confirmation
+- Added `showCashConfirmation: Boolean` to `PosUiState`
+- Added `showCashPaymentConfirmation()` + `dismissCashConfirmation()` to `PosViewModel`
+- "Bayar Tunai" button now calls `showCashPaymentConfirmation()` → shows `ConfirmDialog` → on confirm: `dismissCashConfirmation()` then `checkout(PaymentMethod.CASH)`
+- Pattern: dismiss state first, then trigger action (avoids stale dialog on screen during processing)
+
 ## Current State (2026-02-16)
 - Project version: 1.0.0
 - DB version: 10 (migration 9→10: added restaurant_id to users table)
@@ -1091,3 +1213,157 @@ Reversed FAB restriction from previous change. Cashiers can now add new Penerima
 | Edit | Yes | No |
 | Delete | Yes | No |
 | View/Expand | Yes | Yes |
+
+## 2026-02-19 — Kasir Sync: Saldo Kas + QRIS Image
+
+### Problem 1: Saldo Kas not synced for Kasir role
+After Owner updates Saldo Kas Awal, Kasir device didn't show updated balance.
+
+### Root Cause 1
+PIN login (`authenticatePin()`) called `sessionManager.loginPin()` which connected Realtime but did NOT call `pullAllFromSupabase()`. Any `general_ledger` entries created while the Kasir app was closed were missed — Realtime only catches future events, not past ones.
+
+### Fix 1
+Added `syncManager.pullAllFromSupabase(restaurantId)` as a background coroutine (`viewModelScope.launch`) inside `authenticatePin()` after `loginPin()` succeeds. Non-blocking — PIN unlock is instant, pull runs in background.
+
+### Problem 2: QRIS image not synced for Kasir role
+After Owner updates QRIS image in Settings, Kasir device didn't show the QRIS option.
+
+### Root Cause 2
+`RealtimeManager` had listeners for 12 tenant tables but NOT for the `restaurants` table. QRIS data (`qris_image_url`, `qris_merchant_name`) is stored in `restaurants` table and cached in `QrisSettingsDataStore`. Without a Realtime listener, updates never reached the Kasir device in real-time.
+
+### Fix 2
+Added `setupRestaurantsListener()` to `RealtimeManager`:
+- Listens to `restaurants` table filtered by `id = restaurantId` (not `restaurant_id` — the restaurant's own PK)
+- On UPDATE: decodes `RestaurantDto` → upserts to `restaurantDao` → updates `QrisSettingsDataStore` with QRIS fields
+- Injected `RestaurantDao` and `QrisSettingsDataStore` into `RealtimeManager` constructor
+
+### Files changed
+- `AuthViewModel.kt`: Added background pull on PIN login
+- `RealtimeManager.kt`: Added `RestaurantDao` + `QrisSettingsDataStore` deps, added `setupRestaurantsListener()`, registered in `connect()`
+
+### LESSONS
+- **PIN login must also pull from Supabase** — Realtime only catches events that happen while the WebSocket is connected. Changes made while the app was closed are invisible to Realtime. Always pull on any login type (email or PIN) to catch up on missed changes.
+- **Settings stored in non-tenant tables (e.g., `restaurants`) also need Realtime listeners** — the `restaurants` table is the tenant itself, not one of the 12 tenant-scoped tables. It was excluded from Realtime listeners even though it holds cross-device settings (QRIS). Any table whose data needs real-time cross-device sync must have a Realtime listener.
+- **Realtime filter for `restaurants` uses `id` (PK), not `restaurant_id`** — tenant tables use `filter(column = "restaurant_id", ...)`, but the restaurant's own table uses `filter(column = "id", ...)` since the restaurant IS the entity being filtered.
+
+## 2026-02-19 — QRIS Image Not Rendering (Coil 3 Missing Network Module)
+
+### Problem
+After Owner uploads QRIS image to Supabase Storage, Kasir's POS screen shows the QRIS dialog but the image is blank. The `isQrisConfigured` flag is true (button enabled), but `AsyncImage` renders nothing.
+
+### Root Cause
+**Coil 3 does NOT include a network fetcher by default.** The project had only `coil-compose` (`io.coil-kt.coil3:coil-compose:3.0.4`) which provides `AsyncImage` but cannot load HTTP/HTTPS URLs. The Supabase Storage URL (`https://xxx.supabase.co/storage/v1/object/public/qris-images/...`) silently fails to load.
+
+Coil 3 migration from Coil 2: network support was split into a separate module. Without `coil-network-okhttp`, `AsyncImage` only supports local URIs (`content://`, `file://`, resources).
+
+### Fix
+- `libs.versions.toml`: Added `coil-network-okhttp = { group = "io.coil-kt.coil3", name = "coil-network-okhttp", version.ref = "coil" }`
+- `app/build.gradle.kts`: Added `implementation(libs.coil.network.okhttp)`
+
+No code changes needed — Coil 3 auto-registers `OkHttpNetworkFetcherFactory` via service loader when the module is on the classpath.
+
+### Files changed
+- `gradle/libs.versions.toml`: Added `coil-network-okhttp` library entry
+- `app/build.gradle.kts`: Added `implementation(libs.coil.network.okhttp)`
+
+### LESSON
+**Coil 3 requires explicit network module for HTTPS image loading.** Unlike Coil 2, `coil-compose` alone cannot load URLs. Always add `coil-network-okhttp` alongside `coil-compose` when loading remote images. The symptom is `AsyncImage` silently showing nothing — no error, no crash.
+
+
+## 2026-02-20: Pembelian — Auto-lock Satuan When Item Already in Inventory
+- **Goal:** When adding an item in GoodsReceivingFormScreen, if the product (or product+variant) already has an inventory record, auto-fill `unit` from `InventoryEntity.unit` and disable the Satuan dropdown.
+- **ViewModel (`PurchasingViewModel`):**
+  - Injected `InventoryDao` directly (lightweight; already in DI graph via Room module).
+  - Added `unitLocked: Boolean = false` to `CurrentItemInput`.
+  - `onCurrentItemProductChange`: resets `unitLocked = false`, then coroutine looks up `inventoryDao.get(productId, "")` → if found, sets `unit = inv.unit, unitLocked = true`.
+  - `onCurrentItemVariantChange`: resets `unitLocked = false`, then coroutine looks up `inventoryDao.get(productId, variantId)` → if found, sets `unit = inv.unit, unitLocked = true`.
+  - `onCurrentItemCategoryChange`: also resets `unitLocked = false` (product is cleared).
+- **Screen (`GoodsReceivingFormScreen`):**
+  - `ExposedDropdownMenuBox.onExpandedChange`: guarded with `if (!currentItem.unitLocked)`.
+  - `OutlinedTextField`: `readOnly = currentItem.unitLocked`, `onValueChange` guarded with `if (!currentItem.unitLocked)`.
+  - Trailing icon and `ExposedDropdownMenu` conditionally rendered only when `!currentItem.unitLocked`.
+- **Pattern:** Inject DAO directly into ViewModel for lightweight point-lookups (no need to inject full Repository when only one suspend query is needed).
+
+## 2026-02-20: General Ledger Remote Constraint Drift (SALE_QRIS/COGS)
+
+### Problem
+`SALE_QRIS` (QRIS sale) and `COGS` (goods receiving) entries were created in app flow but rejected by Supabase, so they did not persist in remote `general_ledger`.
+
+### Root Cause
+`supabase/schema.sql` defined `general_ledger.type` with CHECK values limited to `INITIAL_BALANCE`, `SALE`, `WITHDRAWAL`, `ADJUSTMENT`. New enum values `SALE_QRIS` and `COGS` were missing.
+
+### Fix Applied
+- Updated `supabase/schema.sql` CHECK constraint to include all ledger types: `INITIAL_BALANCE`, `SALE`, `SALE_QRIS`, `WITHDRAWAL`, `ADJUSTMENT`, `COGS`.
+- Added `supabase/migration_general_ledger_type_constraint.sql` for existing databases to drop/recreate the constraint.
+- Kept Saldo Kas calculation unchanged (`getBalance()` still sums only cash-affecting types).
+
+### Durable Rule
+When adding/changing `LedgerType`, update both:
+1. App logic (`LedgerType`, DAO queries)
+2. Supabase schema constraints + migration script
+
+If these drift, sync will silently queue/retry and remote data will be incomplete.
+
+## 2026-02-20: Daftar Produk (Menu) â€” Category Grouping, Clone, Title Search
+
+### Goal
+Improve Menu management UX in `Daftar Produk` by grouping menu items per category, adding a per-item clone action, and adding top-right title search.
+
+### Implementation
+- `ProductListScreen`:
+  - Added TopAppBar search action (top-right) that toggles a search field.
+  - Search filters menu items by case-insensitive match on `product.name`.
+  - Menu items are rendered by category section using `menuCategories` ordering.
+  - Items with blank/missing category are rendered under `Tanpa Kategori`.
+  - Added clone icon button (`ContentCopy`) per card, alongside delete.
+- `ProductManagementViewModel`:
+  - Added `cloneProduct(productId)`:
+    1. Load source product and its components.
+    2. Create new product with copied fields and variants.
+    3. Recreate all product components for the cloned product.
+  - Added clone name generator to avoid collisions:
+    - first copy: `<name> (Copy)`
+    - next copies: `<name> (Copy 2)`, `<name> (Copy 3)`, etc.
+
+### Files Changed
+- `feature/product/ProductListScreen.kt`
+- `feature/product/ProductManagementViewModel.kt`
+
+### Durable Rule
+Menu list screens that manage `ProductType.MENU_ITEM` should support:
+1. Category-grouped rendering (repository category order),
+2. Case-insensitive title search,
+3. Full clone behavior (product + variants + components) with deterministic copy naming.
+
+## 2026-02-20: Dashboard — Date Period Options + Custom Date Picker
+
+### Goal
+Dashboard metrics and sales summaries must be switchable by period without hardcoding to "hari ini".
+
+### Implementation
+- Added Dashboard period state in `DashboardViewModel`:
+  - `DashboardDateOption`: `TODAY`, `THIS_MONTH`, `THIS_YEAR`, `CUSTOM_DATE`
+  - `DashboardDateFilter`: selected option + selected date millis
+- Replaced static `todayRange` queries with range-driven flows:
+  - active range is derived from selected period
+  - metric flows use `flatMapLatest` so changing filter re-queries totals/count/cash/QRIS/transactions immediately
+- Updated `DateTimeUtil` with reusable period helpers:
+  - `dayRange(epochMillis)`
+  - `monthRange(epochMillis = now)`
+  - `yearRange(epochMillis = now)`
+- Updated `DashboardScreen` UI:
+  - Added date chips: `Hari ini`, `Bulan ini`, `Tahun ini`, `Pilih tanggal`
+  - `Pilih tanggal` opens `DatePickerDialog` and applies selected day via `viewModel.selectCustomDate(...)`
+  - Card title and empty states now use dynamic period label, not fixed "hari ini"
+
+### Files Changed
+- `core/util/DateTimeUtil.kt`
+- `feature/dashboard/DashboardViewModel.kt`
+- `feature/dashboard/DashboardScreen.kt`
+
+### Durable Rule
+For dashboard/report screens with period filters:
+1. Keep selected period as ViewModel `StateFlow`.
+2. Convert selected option to `(start, end)` date range in one place.
+3. Derive Room/SQL flows with `flatMapLatest` from that range.
+4. Ensure labels/empty states reflect the selected period (avoid hardcoded "hari ini").

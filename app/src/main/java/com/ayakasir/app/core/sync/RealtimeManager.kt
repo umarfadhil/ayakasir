@@ -9,9 +9,11 @@ import com.ayakasir.app.core.data.local.dao.InventoryDao
 import com.ayakasir.app.core.data.local.dao.ProductComponentDao
 import com.ayakasir.app.core.data.local.dao.ProductDao
 import com.ayakasir.app.core.data.local.dao.TransactionDao
+import com.ayakasir.app.core.data.local.dao.RestaurantDao
 import com.ayakasir.app.core.data.local.dao.UserDao
 import com.ayakasir.app.core.data.local.dao.VariantDao
 import com.ayakasir.app.core.data.local.dao.VendorDao
+import com.ayakasir.app.core.data.local.datastore.QrisSettingsDataStore
 import com.ayakasir.app.core.data.remote.dto.CashWithdrawalDto
 import com.ayakasir.app.core.data.remote.dto.CategoryDto
 import com.ayakasir.app.core.data.remote.dto.GeneralLedgerDto
@@ -20,6 +22,7 @@ import com.ayakasir.app.core.data.remote.dto.GoodsReceivingItemDto
 import com.ayakasir.app.core.data.remote.dto.InventoryDto
 import com.ayakasir.app.core.data.remote.dto.ProductComponentDto
 import com.ayakasir.app.core.data.remote.dto.ProductDto
+import com.ayakasir.app.core.data.remote.dto.RestaurantDto
 import com.ayakasir.app.core.data.remote.dto.TransactionDto
 import com.ayakasir.app.core.data.remote.dto.TransactionItemDto
 import com.ayakasir.app.core.data.remote.dto.UserDto
@@ -58,7 +61,9 @@ class RealtimeManager @Inject constructor(
     private val productComponentDao: ProductComponentDao,
     private val cashWithdrawalDao: CashWithdrawalDao,
     private val generalLedgerDao: GeneralLedgerDao,
-    private val userDao: UserDao
+    private val userDao: UserDao,
+    private val restaurantDao: RestaurantDao,
+    private val qrisSettingsDataStore: QrisSettingsDataStore
 ) {
     companion object {
         private const val TAG = "RealtimeManager"
@@ -92,6 +97,7 @@ class RealtimeManager @Inject constructor(
                 setupProductComponentsListener(ch, restaurantId, newScope)
                 setupCashWithdrawalsListener(ch, restaurantId, newScope)
                 setupGeneralLedgerListener(ch, restaurantId, newScope)
+                setupRestaurantsListener(ch, restaurantId, newScope)
 
                 ch.subscribe()
                 Log.d(TAG, "Realtime channel subscribed")
@@ -339,6 +345,30 @@ class RealtimeManager @Inject constructor(
                         else -> {}
                     }
                 }.onFailure { Log.e(TAG, "Realtime general_ledger error: ${it.message}") }
+            }
+        }
+    }
+
+    private fun setupRestaurantsListener(ch: RealtimeChannel, restaurantId: String, scope: CoroutineScope) {
+        val flow = ch.postgresChangeFlow<PostgresAction>(schema = "public") {
+            table = "restaurants"
+            filter(column = "id", operator = FilterOperator.EQ, value = restaurantId)
+        }
+        scope.launch {
+            flow.collect { action ->
+                runCatching {
+                    when (action) {
+                        is PostgresAction.Update -> {
+                            val dto = action.decodeRecord<RestaurantDto>()
+                            restaurantDao.insert(dto.toEntity())
+                            qrisSettingsDataStore.saveSettings(
+                                dto.qrisImageUrl.orEmpty(),
+                                dto.qrisMerchantName.orEmpty()
+                            )
+                        }
+                        else -> {}
+                    }
+                }.onFailure { Log.e(TAG, "Realtime restaurants error: ${it.message}") }
             }
         }
     }

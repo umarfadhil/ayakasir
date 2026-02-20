@@ -84,6 +84,42 @@ class EscPosReceiptBuilder {
         val subtotal: Long
     )
 
+    private fun centerWrappedText(text: String): EscPosReceiptBuilder {
+        val words = text.trim().split(Regex("\\s+")).filter { it.isNotBlank() }
+        if (words.isEmpty()) {
+            text("")
+            return this
+        }
+
+        var current = ""
+        words.forEach { word ->
+            if (current.isBlank()) {
+                current = word
+                return@forEach
+            }
+
+            val candidate = "$current $word"
+            if (candidate.length <= LINE_WIDTH) {
+                current = candidate
+            } else {
+                centerTextLine(current)
+                current = word
+            }
+        }
+
+        if (current.isNotBlank()) {
+            centerTextLine(current)
+        }
+        return this
+    }
+
+    private fun centerTextLine(text: String) {
+        buffer.write(ALIGN_CENTER)
+        buffer.write(text.take(LINE_WIDTH).toByteArray())
+        buffer.write(byteArrayOf(LF))
+        buffer.write(ALIGN_LEFT)
+    }
+
     fun buildReceipt(
         storeName: String,
         cashierName: String,
@@ -99,20 +135,20 @@ class EscPosReceiptBuilder {
             .apply {
                 buffer.write(ALIGN_CENTER)
                 buffer.write(DOUBLE_HEIGHT)
-                text(storeName)
+                buffer.write(BOLD_ON)
+                text(storeName.ifBlank { "AyaKa\$ir" })
+                buffer.write(BOLD_OFF)
                 buffer.write(NORMAL_SIZE)
-                text("")
             }
             .separator()
-            .line("Kasir:", cashierName)
-            .line("Tanggal:", dateTime)
-            .line("No:", transactionId.takeLast(8).uppercase())
+            .line("Tanggal & Jam", dateTime)
             .separator()
+            .line("Item", "Sub-total")
             .apply {
                 for (item in items) {
-                    text(item.name)
+                    text(item.name.take(LINE_WIDTH))
                     line(
-                        "  ${item.qty}x ${CurrencyFormatter.format(item.unitPrice)}",
+                        "  Qty ${item.qty}",
                         CurrencyFormatter.format(item.subtotal)
                     )
                 }
@@ -120,21 +156,17 @@ class EscPosReceiptBuilder {
             .doubleSeparator()
             .apply {
                 buffer.write(BOLD_ON)
-                line("TOTAL", CurrencyFormatter.format(total))
+                line("GRAND TOTAL", CurrencyFormatter.format(total))
                 buffer.write(BOLD_OFF)
             }
-            .line("Bayar ($paymentMethod)", CurrencyFormatter.format(paidAmount ?: total))
             .apply {
-                if (paymentMethod == "CASH" && paidAmount != null && paidAmount > total) {
-                    line("Kembali", CurrencyFormatter.format(paidAmount - total))
-                }
+                if (cashierName.isNotBlank()) line("Kasir", cashierName)
+                if (transactionId.isNotBlank()) line("No", transactionId.takeLast(8).uppercase())
+                if (paymentMethod.isNotBlank()) line("Metode", paymentMethod)
+                if (paidAmount != null) line("Dibayar", CurrencyFormatter.format(paidAmount))
             }
             .separator()
-            .apply {
-                buffer.write(ALIGN_CENTER)
-                text("Terima kasih!")
-                text("Selamat menikmati")
-            }
+            .centerWrappedText("Dicetak melalui apliakasi AyaKa\$ir")
             .feedAndCut()
             .build()
     }

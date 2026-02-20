@@ -222,10 +222,13 @@ CREATE INDEX idx_transaction_items_restaurant ON transaction_items(restaurant_id
 CREATE INDEX idx_transaction_items_transaction ON transaction_items(transaction_id);
 
 -- General ledger table (cashflow tracking)
+-- NOTE:
+-- - Cash-affecting types (included in Saldo Kas): INITIAL_BALANCE, SALE, WITHDRAWAL, ADJUSTMENT
+-- - Non-cash bookkeeping types (excluded from Saldo Kas): SALE_QRIS, COGS
 CREATE TABLE general_ledger (
     id UUID PRIMARY KEY,
     restaurant_id UUID REFERENCES restaurants(id),
-    type TEXT NOT NULL CHECK (type IN ('INITIAL_BALANCE', 'SALE', 'WITHDRAWAL', 'ADJUSTMENT')),
+    type TEXT NOT NULL CHECK (type IN ('INITIAL_BALANCE', 'SALE', 'SALE_QRIS', 'WITHDRAWAL', 'ADJUSTMENT', 'COGS')),
     amount BIGINT NOT NULL,
     reference_id TEXT,
     description TEXT NOT NULL,

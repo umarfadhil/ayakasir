@@ -33,3 +33,7 @@
 # General
 -dontwarn org.slf4j.**
 -dontwarn org.bouncycastle.**
+
+# R8 missing JDK management classes referenced by Ktor debug detector on Android
+-dontwarn java.lang.management.ManagementFactory
+-dontwarn java.lang.management.RuntimeMXBean

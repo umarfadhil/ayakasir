@@ -2,9 +2,9 @@
 
 ## Entry Points
 - [MainActivity.kt](app/src/main/java/com/ayakasir/app/MainActivity.kt) - Single activity, schedules sync, sets theme
-- [AyaKasirApp.kt](app/src/main/java/com/ayakasir/app/AyaKasirApp.kt) - Application class, Hilt entry
+- [AyaKasirApp.kt](app/src/main/java/com/ayakasir/app/AyaKasirApp.kt) - Application class, Hilt entry, provides WorkManager `Configuration.Provider`
 - [MainScaffold.kt](app/src/main/java/com/ayakasir/app/MainScaffold.kt) - Root composable with NavHost
-- [AndroidManifest.xml](app/src/main/AndroidManifest.xml) - Permissions: INTERNET, BLUETOOTH_CONNECT/SCAN, responsive orientation
+- [AndroidManifest.xml](app/src/main/AndroidManifest.xml) - Permissions: INTERNET, BLUETOOTH_CONNECT/SCAN, responsive orientation, removes `androidx.work.WorkManagerInitializer` metadata from `androidx.startup.InitializationProvider`
 
 ## Navigation
 - [Screen.kt](app/src/main/java/com/ayakasir/app/core/navigation/Screen.kt) - @Serializable sealed interface (28 screens)

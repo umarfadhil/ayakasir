@@ -165,6 +165,19 @@ interface ExampleDao {
 - Repository: `@Singleton class Repo @Inject constructor(...)`
 - Module: `@Module @InstallIn(SingletonComponent::class)`
 
+## WorkManager Initialization Rule
+- If `AyaKasirApp` (or any Application class) implements `androidx.work.Configuration.Provider`, remove only WorkManager's startup metadata from manifest:
+  - Add `xmlns:tools="http://schemas.android.com/tools"` on `<manifest>`.
+  - Under `<application>`, add `androidx.startup.InitializationProvider` with:
+    - `<meta-data android:name="androidx.work.WorkManagerInitializer" tools:node="remove" />`
+- Keep `InitializationProvider` itself (do not remove the whole provider), so other AndroidX Startup initializers still run.
+
+## Release R8 Rule (Ktor)
+- Keep these in `app/proguard-rules.pro` for release minify:
+  - `-dontwarn java.lang.management.ManagementFactory`
+  - `-dontwarn java.lang.management.RuntimeMXBean`
+- Reason: Ktor debug detector references JVM management classes that are unavailable on Android; without these rules, `minifyReleaseWithR8` fails.
+
 ## Sync Queue Rules
 - SyncQueueEntity fields: `tableName`, `recordId`, `operation` (INSERT/UPDATE/DELETE), `payload` (JSON)
 - Enqueue only if immediate push fails OR when offline.
@@ -426,3 +439,4 @@ Box(modifier = Modifier.heightIn(max = 180.dp)) {
 - Let `supabase/schema.sql` `general_ledger.type` CHECK drift from `LedgerType` enum values (causes remote sync rejection)
 - Forget to set `restaurantId = sessionManager.currentRestaurantId` when creating new users via owner
 - Use `Column + verticalScroll` inside AlertDialog for long lists (use `Box(heightIn) + LazyColumn` instead)
+- Keep `androidx.work.WorkManagerInitializer` active when using `Application : Configuration.Provider` (fails release lint with `RemoveWorkManagerInitializer`)

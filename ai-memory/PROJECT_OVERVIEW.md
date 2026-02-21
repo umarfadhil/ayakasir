@@ -63,8 +63,13 @@
 - Gradle Kotlin DSL + Version Catalog (libs.versions.toml)
 - Java 17 target
 - ProGuard enabled for release
+- R8 release rules include:
+  - `-dontwarn java.lang.management.ManagementFactory`
+  - `-dontwarn java.lang.management.RuntimeMXBean`
+  (required for Ktor debug-detector references on Android release shrink)
 - Debug variant: `.debug` suffix
 - Room DB version: 15
+- WorkManager uses on-demand initialization via `AyaKasirApp : Configuration.Provider`; manifest removes default `androidx.work.WorkManagerInitializer` metadata.
 - Supabase credentials: loaded from `local.properties` (gitignored), NOT hardcoded in `build.gradle.kts`
   - Keys: `SUPABASE_URL`, `SUPABASE_ANON_KEY`
   - Accessed via `BuildConfig.SUPABASE_URL`, `BuildConfig.SUPABASE_ANON_KEY`

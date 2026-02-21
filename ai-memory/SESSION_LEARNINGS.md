@@ -1367,3 +1367,34 @@ For dashboard/report screens with period filters:
 2. Convert selected option to `(start, end)` date range in one place.
 3. Derive Room/SQL flows with `flatMapLatest` from that range.
 4. Ensure labels/empty states reflect the selected period (avoid hardcoded "hari ini").
+
+## 2026-02-20: Release Build Blockers - R8 Ktor Missing Classes + WorkManager Lint
+
+### Problem
+Release build failed with:
+1. `minifyReleaseWithR8`: missing classes `java.lang.management.ManagementFactory` and `RuntimeMXBean` referenced by `io.ktor.util.debug.IntellijIdeaDebugDetector`.
+2. `lintVitalRelease`: fatal `RemoveWorkManagerInitializer` because app uses `Application : Configuration.Provider`.
+
+### Root Cause
+- Ktor includes JVM-only debug detector references, and R8 fails shrink unless missing class warnings are explicitly suppressed for Android.
+- `AyaKasirApp` provides custom WorkManager config (on-demand init), but manifest did not remove WorkManager's default AndroidX Startup initializer metadata.
+
+### Fix Applied
+- `app/proguard-rules.pro`:
+  - Added:
+    - `-dontwarn java.lang.management.ManagementFactory`
+    - `-dontwarn java.lang.management.RuntimeMXBean`
+- `app/src/main/AndroidManifest.xml`:
+  - Added `tools` namespace.
+  - Added `androidx.startup.InitializationProvider` entry that removes:
+    - `androidx.work.WorkManagerInitializer` metadata (`tools:node="remove"`).
+
+### Validation
+- `:app:minifyReleaseWithR8` passes after ProGuard rule update.
+- `:app:lintVitalRelease` and `:app:assembleRelease` pass in a non-OneDrive temp workspace.
+
+### Durable Rule
+For any app using `Application : androidx.work.Configuration.Provider`:
+1. Remove `androidx.work.WorkManagerInitializer` metadata from manifest (do not remove entire `InitializationProvider`).
+2. Keep R8 `-dontwarn` rules for Ktor JVM management references in release shrink.
+3. If project is under OneDrive and lint cache lock errors appear, run release build from a non-synced path to confirm actual lint findings.

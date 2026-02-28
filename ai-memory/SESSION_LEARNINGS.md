@@ -1,5 +1,28 @@
 # Session Learnings
 
+## 2026-02-28: Kasir QRIS - New-Device Load Reliability + Adaptive Dialog Sizing
+
+### Goal
+Fix QRIS image not showing reliably on newly logged-in devices and ensure the QR image stays responsive without covering action buttons in the Kasir payment dialog.
+
+### Implementation
+- `QrisRepository`:
+  - `saveQrisSettings()` now accepts both `https://` and `http://` URLs as already-remote values.
+  - `pullQrisSettings()` now normalizes remote `qris_image_url` before writing to DataStore.
+  - Added defensive normalization: if remote value is non-HTTP (legacy/invalid), fallback to deterministic Supabase Storage public path `qris-images/<restaurantId>/qris.jpg`.
+- `PosViewModel`:
+  - Injected `QrisRepository`.
+  - Added startup refresh (`init`) to pull latest QRIS settings from Supabase for the active restaurant.
+  - Added refresh-before-payment in `startQrisPayment()` so newly logged-in devices re-sync QRIS data before opening payment dialog.
+- `PosScreen`:
+  - QRIS dialog image now uses adaptive bounded sizing derived from device screen dimensions.
+  - Dialog content has max height and scroll behavior; QR image is centered and constrained, so action buttons remain reachable and not visually covered.
+
+### Durable Rules
+- For cross-device QRIS reliability, refresh QRIS settings from server at POS startup and again before starting QRIS payment.
+- Never trust non-HTTP QRIS URLs from remote records; normalize or fallback to a known Storage path before persisting into local QRIS DataStore.
+- In payment dialogs, keep QR image dimensions bounded by screen size and keep button area accessible on smaller devices.
+
 ## 2026-02-20: Printer Settings (Bluetooth + WiFi) + POS Print Prompt
 
 ### Goal

@@ -6,6 +6,7 @@ import com.ayakasir.app.core.data.repository.CashBalanceRepository
 import com.ayakasir.app.core.data.repository.CashWithdrawalRepository
 import com.ayakasir.app.core.data.repository.CategoryRepository
 import com.ayakasir.app.core.data.repository.ProductRepository
+import com.ayakasir.app.core.data.repository.QrisRepository
 import com.ayakasir.app.core.data.repository.RestaurantRepository
 import com.ayakasir.app.core.data.repository.TransactionRepository
 import com.ayakasir.app.core.data.local.datastore.QrisSettingsDataStore
@@ -49,6 +50,7 @@ class PosViewModel @Inject constructor(
     private val syncManager: SyncManager,
     private val paymentGateway: PaymentGateway,
     private val qrisSettingsDataStore: QrisSettingsDataStore,
+    private val qrisRepository: QrisRepository,
     private val printerManager: BluetoothPrinterManager
 ) : ViewModel() {
 
@@ -118,6 +120,12 @@ class PosViewModel @Inject constructor(
 
     val isQrisConfigured: StateFlow<Boolean> = qrisSettingsDataStore.isConfigured
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
+    init {
+        viewModelScope.launch {
+            refreshQrisFromServer()
+        }
+    }
 
     fun refresh() {
         val restaurantId = sessionManager.currentRestaurantId ?: return
@@ -259,6 +267,7 @@ class PosViewModel @Inject constructor(
 
         viewModelScope.launch {
             _uiState.update { it.copy(isProcessing = true, error = null) }
+            refreshQrisFromServer()
             val referenceId = UuidGenerator.generate()
             when (val result = paymentGateway.initiatePayment(state.cartTotal, referenceId)) {
                 is PaymentResult.Pending -> {
@@ -528,6 +537,11 @@ class PosViewModel @Inject constructor(
     private fun isCheckoutLocked(): Boolean {
         val state = _uiState.value
         return state.isProcessing || state.qrisPayment != null || state.showPrintReceiptConfirmation
+    }
+
+    private suspend fun refreshQrisFromServer() {
+        val restaurantId = sessionManager.currentRestaurantId ?: return
+        qrisRepository.pullQrisSettings(restaurantId)
     }
 
     private suspend fun createTransaction(

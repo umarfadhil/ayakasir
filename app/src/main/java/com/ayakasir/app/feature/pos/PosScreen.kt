@@ -11,8 +11,13 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -50,6 +55,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -402,15 +408,28 @@ fun PosScreen(
     }
 
     uiState.qrisPayment?.let { payment ->
+        val configuration = LocalConfiguration.current
+        val screenWidth = configuration.screenWidthDp.dp
+        val screenHeight = configuration.screenHeightDp.dp
+        val maxDialogHeight = screenHeight * 0.85f
+        val adaptiveQrSize = (screenWidth * 0.62f)
+            .coerceAtMost(screenHeight * 0.30f)
+            .coerceIn(180.dp, 300.dp)
+
         Dialog(onDismissRequest = { viewModel.dismissQrisPayment() }) {
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .widthIn(max = 460.dp)
                     .padding(8.dp),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
             ) {
                 Column(
-                    modifier = Modifier.padding(24.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = maxDialogHeight)
+                        .padding(20.dp)
+                        .verticalScroll(rememberScrollState()),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
@@ -434,12 +453,17 @@ fun PosScreen(
                     }
 
                     if (payment.qrCodeData.isNotBlank()) {
-                        AsyncImage(
-                            model = payment.qrCodeData,
-                            contentDescription = "QRIS",
-                            modifier = Modifier.height(440.dp).width(440.dp),
-                            contentScale = ContentScale.Fit
-                        )
+                        Box(
+                            modifier = Modifier.fillMaxWidth(),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            AsyncImage(
+                                model = payment.qrCodeData,
+                                contentDescription = "QRIS",
+                                modifier = Modifier.size(adaptiveQrSize),
+                                contentScale = ContentScale.Fit
+                            )
+                        }
                     } else {
                         Text(
                             text = "QRIS tidak tersedia.",

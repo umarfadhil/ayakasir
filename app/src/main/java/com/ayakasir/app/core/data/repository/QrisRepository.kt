@@ -31,7 +31,7 @@ class QrisRepository @Inject constructor(
     /**
      * Save QRIS settings to Supabase and DataStore.
      * If [imageUri] is a local content:// URI, uploads to Supabase Storage first.
-     * If [imageUri] already starts with "https://", uses it as-is.
+     * If [imageUri] already starts with "http://" or "https://", uses it as-is.
      */
     suspend fun saveQrisSettings(imageUri: String, merchantName: String) {
         val restaurantId = sessionManager.currentRestaurantId
@@ -39,7 +39,7 @@ class QrisRepository @Inject constructor(
 
         val finalUrl = when {
             imageUri.isBlank() -> ""
-            imageUri.startsWith("https://") -> imageUri
+            imageUri.startsWith("https://") || imageUri.startsWith("http://") -> imageUri
             else -> uploadImage(imageUri, restaurantId)
         }
 
@@ -68,13 +68,26 @@ class QrisRepository @Inject constructor(
                 .select { filter { filter("id", FilterOperator.EQ, restaurantId) } }
                 .decodeSingle<RestaurantDto>()
 
-            val url = dto.qrisImageUrl.orEmpty()
+            val url = normalizeRemoteImageUrl(dto.qrisImageUrl.orEmpty(), restaurantId)
             val merchant = dto.qrisMerchantName.orEmpty()
             qrisSettingsDataStore.saveSettings(url, merchant)
             Log.d(TAG, "Pulled QRIS settings for restaurant $restaurantId: url=${url.isNotEmpty()}")
         } catch (e: Exception) {
             Log.w(TAG, "pullQrisSettings failed: ${e.message}")
         }
+    }
+
+    private fun normalizeRemoteImageUrl(rawUrl: String, restaurantId: String): String {
+        val normalized = rawUrl.trim()
+        if (normalized.isBlank()) return ""
+        if (normalized.startsWith("https://") || normalized.startsWith("http://")) {
+            return normalized
+        }
+
+        // Defensive fallback for legacy/invalid values (e.g. content://) so other devices can still load QRIS.
+        val fallback = supabaseClient.storage.from(BUCKET).publicUrl("$restaurantId/qris.jpg")
+        Log.w(TAG, "Non-HTTP QRIS URL found. Falling back to bucket path for restaurant $restaurantId")
+        return fallback
     }
 
     private suspend fun uploadImage(uriString: String, restaurantId: String): String {

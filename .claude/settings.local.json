@@ -33,7 +33,9 @@
       "Bash(xxd:*)",
       "Bash(\"c:/Users/Umar Fadhil:*)",
       "Bash(./gradlew clean:*)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(claude-vscode.editor.openLast)",
+      "Bash(claude-vscode.editor.open:*)"
     ]
   }
 }
